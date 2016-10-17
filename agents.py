@@ -1,8 +1,19 @@
 import numpy as np
 import gym
-from keras.models import Model, Sequential
+from keras.models import Model, Sequential, load_model
+from keras.layers import Convolution2D, Dense, Flatten
+from keras.preprocessing import image
+import pickle as pkl
 
 from time import sleep
+#import cv2
+from PIL import Image
+
+# Very Important: it defaults to tensor flow
+import keras.backend as K
+print K.image_dim_ordering()
+#K.set_image_dim_ordering('th')
+#print K.image_dim_ordering()
 
 def get_space_dim(Space):
     # get the dimensions of the spaces
@@ -156,17 +167,17 @@ class KerasActor(Policy):
         raise NotImplementedError
 
 class ReplayMemory(object):
-    def __init__(self, memory_size, state_shape):
+    def __init__(self, memory_size, state_shape, dtype=np.uint8):
         self.memory_size = memory_size
 
         if type(state_shape) == int:
             states_shape = (memory_size, state_shape)
         else:
             states_shape = (memory_size,) + tuple(state_shape)
-        self.states = np.zeros(states_shape)
-        self.actions = np.zeros((memory_size,), dtype='int32')
-        self.next_states = np.zeros(states_shape)
-        self.rewards = np.zeros((memory_size,))
+        self.states = np.zeros(states_shape, dtype=dtype)
+        self.actions = np.zeros((memory_size,), dtype=np.uint8)
+        self.next_states = np.zeros(states_shape, dtype=dtype)
+        self.rewards = np.zeros((memory_size,), dtype=dtype)
 
         self.idx = 0 #memory location
         self.full = False
@@ -199,8 +210,20 @@ class ReplayMemory(object):
         rewards = self.rewards[idxs]
         return states, actions, next_states, rewards
 
+    def save(self, dir='.'):
+        np.save('{}/states.npy'.format(dir), self.states)
+        np.save('{}/next_states.npy'.format(dir), self.next_states)
+        np.save('{}/actions.npy'.format(dir), self.actions)
+        np.save('{}/rewards.npy'.format(dir), self.rewards)
+
+    def load(self, f_states, f_next_states, f_actions, f_rewards):
+        self.states = np.load(f_states)
+        self.next_states = np.load(f_next_states)
+        self.actions = np.load(f_actions)
+        self.rewards = np.load(f_rewards)
+
 class KerasDQN(Agent):
-    def __init__(self, S, A, model, policy=EpsilonGreedy, gamma=0.99, memory_size=1000, update_freq=100, batch_size=32, **kwargs):
+    def __init__(self, S, A, model=None, policy=EpsilonGreedy, gamma=0.99, memory_size=10000, update_freq=10000, batch_size=32, **kwargs):
         self.S = S
         self.A = A
         assert type(A) == gym.spaces.Discrete
@@ -212,17 +235,6 @@ class KerasDQN(Agent):
 
         super(KerasDQN, self).__init__(**kwargs)
 
-        if not self.name:
-            self.name = 'DQN'
-
-        self.model = model
-        self.Qfunction = KerasQ(S, A, model)
-        self.policy = policy(S, A, self.Qfunction)
-
-        self.target_model = Sequential.from_config(self.model.get_config())
-        self.target_model.set_weights(self.model.get_weights())
-        self.target_Qfunction = KerasQ(S, A, self.target_model)
-
         if type(S) == gym.spaces.Box:
             state_shape = S.shape
         elif type(S) == gym.spaces.Discrete:
@@ -230,9 +242,39 @@ class KerasDQN(Agent):
         else:
             raise TypeError
 
-        self.replay_memory = ReplayMemory(memory_size, state_shape)
+        if not self.name:
+            self.name = 'DQN'
 
-        self.state = S.sample()
+        # Use provided model else use atari dqn model
+        if model != None:
+            self.model = model
+        else:
+            if K.image_dim_ordering() == 'th':
+                state_shape = (4,84,84)
+            else:
+                state_shape = (84,84,4)
+            # default DQN as for atari
+            model = Sequential()
+            model.add(Convolution2D(32, 8, 8, subsample=(4,4), input_shape=state_shape, activation='relu'))
+            model.add(Convolution2D(64, 4, 4, subsample=(2,2), activation='relu'))
+            model.add(Convolution2D(64, 3, 3, subsample=(1,1), activation='relu'))
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dense(A.n))
+
+            model.compile(loss='mse', optimizer='rmsprop')
+            self.model = model
+
+        self.Qfunction = KerasQ(S, A, self.model)
+        self.policy = policy(S, A, self.Qfunction)
+
+        self.target_model = Sequential.from_config(self.model.get_config())
+        self.target_model.set_weights(self.model.get_weights())
+        self.target_Qfunction = KerasQ(S, A, self.target_model)
+
+        self.replay_memory = ReplayMemory(memory_size, state_shape, dtype=np.uint8)
+
+        self.state = self.preprocess_input(S.sample())
         self.state.fill(0)
         self.action = np.asarray(A.sample())
         self.action.fill(0)
@@ -240,38 +282,91 @@ class KerasDQN(Agent):
         self.time = 0
         self.episode = 0
 
+        self.frame = 0
+        self.frame_count = 0
+        self.m = 4
+        self.s_next_frames = []
+        self.replay_start_size = 50000
+        self.action_repeat = 4
+        self.action_count = 0
+        self.update_freq = 4
+
     def observe(self, s_next, r, done):
-        s_next = s_next[np.newaxis,:] # turn vector into matrix
+        self.frame_count += 1
+        
+        # collect m frames for input
+        if self.frame < self.m:
+            self.s_next_frames.append(self.preprocess_input(s_next))
+            self.frame += 1
+            return self.Qfunction.get_loss() 
+
+        if K.image_dim_ordering() == 'th':    
+            s_next = np.concatenate(self.s_next_frames, axis=1)
+        else:
+            s_next = np.concatenate(self.s_next_frames, axis=-1)
+        self.frame = 0
+        self.s_next_frames = []
+        
+        #s_next = s_next[np.newaxis,:] # turn vector into matrix
 
         self.done = done
         self.time_management(done)
 
         transition = (self.state, self.action, s_next, r)
         self.replay_memory.add(transition)
-        minibatch = self.replay_memory.get_minibatch(self.batch_size)
-        
-        self.batch_updates(minibatch)
+    
+        if self.frame_count >= self.replay_start_size and self.action_count % self.update_freq == 0:
+            minibatch = self.replay_memory.get_minibatch(self.batch_size)
+            self.batch_updates(minibatch)
 
         self.state = s_next
 
         return self.Qfunction.get_loss()
 
     def act(self, **kwargs):
-        self.action = self.policy(self.state, **kwargs)
+        # repeat action for action_repeat times
+        if self.frame_count % self.action_repeat == 0:
+            # count how many actions you have selected
+            self.action_count += 1
+            # for less than replay_start_size apply a random policy
+            if self.frame_count < self.replay_start_size:
+                self.action = self.A.sample()
+            else:
+                self.action = self.policy(self.state, **kwargs)
         return self.action
 
     def batch_updates(self, minibatch):
+        #for x in minibatch:
+        #    print x.shape
         states, actions, next_states, rewards = minibatch
         targets = np.zeros((states.shape[0], self.A.n))
-
+        #print states.shape
         targets = self.Qfunction(states)
 
         if self.done:
-            targets[actions] = rewards[:,np.newaxis]
+            targets[:,actions] = rewards[:,np.newaxis]
         else:
             Qs = self.target_Qfunction(next_states)
-            targets[actions] = (rewards + self.gamma * Qs.argmax(1))[:,np.newaxis]
+            #print targets.shape
+            #print actions
+            #print targets[:,actions].shape
+            targets[:,actions] = (rewards + self.gamma * Qs.argmax(1))[:,np.newaxis]
         self.Qfunction.update(states, targets)
+
+    def preprocess_input(self, state):
+        state = np.asarray(state, dtype=np.float32)
+        # convert rgb image to yuv image
+        #yuv = cv2.cvtColor(state,cv2.COLOR_RGB2YUV)
+        yCbCr = Image.fromarray(state, 'YCbCr')
+        # extract the y channel
+        #y, u, v = cv2.split(yuv)
+        y, Cb, Cr = yCbCr.split()
+        # rescale to 84x84
+        #y_res = cv2.resize(y, (84,84), interpolation=cv2.INTER_AREA)
+        y_res = y.resize((84,84))
+        y_res = image.img_to_array(y_res)
+        y_res = y_res[np.newaxis,:,:]    
+        return y_res
 
     def time_management(self, done):
         self.time += 1
@@ -279,6 +374,38 @@ class KerasDQN(Agent):
             self.episode += 1 
         if self.time % self.update_freq == 0:
             self.target_Qfunction.explicit_update(self.model.get_weights())
+
+    def save(self, dir='.'):
+        self.model.save('{}/model.h5'.format(dir))
+        self.target_model.save('{}/target_model.h5'.format(dir))
+        self.replay_memory.save(dir=dir)
+
+        d = {'gamma': self.gamma, 'update_freq': self.update_freq, 'batch_size': self.batch_size,
+             'time': self.time, 'episode': self.episode, 'frame': self.frame, 'frame_count': self.frame_count,
+             'action_count': self.action_count}
+        pkl.dump(d, open('{}/config.pkl'.format(dir), 'w'))
+             
+
+    def load(self, f_model, f_target_model, f_states, f_next_states, f_actions, f_rewards, f_config):
+        self.model = load_model(f_model)
+        self.model.compile(loss='mse', optimizer='rmsprop')
+        self.target_model = load_model(f_target_model)
+        self.target_model.compile(loss='mse', optimizer='rmsprop')
+
+        d = pkl.load(open(f_config, 'r'))
+        self.gamma = d['gamma']
+        self.update_freq = d['update_freq']
+        self.batch_size = d['batch_size']
+        self.time = d['time']
+        self.episode = d['episode']
+        #self.frame = d['frame']
+        self.frame_count = d['frame_count']
+        self.action_count = d['action_count']
+
+        self.Qfunction.model = self.model
+        self.target_Qfunction.model = self.target_model
+        self.replay_memory.load(f_states, f_next_states, f_actions, f_rewards)
+        self.policy.model = self.model
 
 class QLearning(Agent):
     def __init__(self, S, A, policy=EpsilonGreedy, learning_rate=1e-3, gamma=0.99, **kwargs):         

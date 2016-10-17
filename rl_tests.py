@@ -112,8 +112,8 @@ def run(env, agent, n_episode, tMax, plot=True, log_freq=10, render=False, monit
 def test_session():
     #AgentClass = DoubleQLearning
     #AgentClass = QLearning
-    #AgentClass = KerasDQN
-    AgentClass = CrossEntropy
+    AgentClass = KerasDQN
+    #AgentClass = CrossEntropy
 
     #model = Sequential()
     #model.add(Dense(output_dim=10, input_dim=4))
@@ -124,34 +124,44 @@ def test_session():
     #              optimizer='adam')
 
     single_run = True
-    plot = True
+    plot = False
     render = False
-    monitor = True
+    monitor = False
+    load_agent = True
+    s_dir = 'dqn_data'
 
     #task_name = 'CartPole-v0'
     #task_name = 'MountainCar-v0'
     #task_name = 'FrozenLake-v0'
-    task_name = 'LunarLander-v2'
+    #task_name = 'LunarLander-v2'
+    task_name = 'Pong-v0'
 
     env = gym.make(task_name)
 
     S = env.observation_space
     A = env.action_space
 
-    n_episode = 100000
-    tMax = 1000
-    log_freq = 1000
+    n_episode = 10
+    tMax = 10000
+    log_freq = 1
 
     learning_rate=1e-4
     gamma=0.99
 
-    if single_run:
+    if single_run:           
         #agent = AgentClass(S, A, learning_rate=learning_rate, gamma=gamma)
-        #agent = AgentClass(S, A, model, gamma=gamma)
-        agent = AgentClass(S, A, n_sample=1000, top_p=0.02)
+        agent = AgentClass(S, A, model=None, gamma=gamma)
+        #agent = AgentClass(S, A, n_sample=1000, top_p=0.02)
+
+        if load_agent:
+            agent.load(s_dir+'/model.h5', s_dir+'/target_model.h5', s_dir+'/states.npy',
+                       s_dir+'/next_states.npy', s_dir+'/actions.npy', s_dir+'/rewards.npy', s_dir+'/config.pkl')
 
         ave_r = run(env, agent, n_episode, tMax, plot=plot, epsilon=0.1,
                     log_freq=log_freq, render=render, monitor=monitor, anneal_percent=1.0)
+
+        print agent.frame_count
+        agent.save(dir=s_dir)
         
     else:
         # Sample learning rates #
