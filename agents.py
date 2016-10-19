@@ -217,6 +217,11 @@ class ReplayMemory(object):
         np.save('{}/rewards.npy'.format(dir), self.rewards)
 
     def load(self, f_states, f_next_states, f_actions, f_rewards):
+        # My hope is that deleting the memory allows me to load the memory
+        del self.states
+        del self.next_states
+        del self.actions
+        del self.rewards
         self.states = np.load(f_states)
         self.next_states = np.load(f_next_states)
         self.actions = np.load(f_actions)
@@ -283,6 +288,9 @@ class KerasDQN(Agent):
         self.state.fill(0)
         self.action = np.asarray(A.sample())
         self.action.fill(0)
+        
+        # only a single frame
+        self.prev_state = S.sample()
 
         self.time = 0
         self.episode = 0
@@ -302,6 +310,7 @@ class KerasDQN(Agent):
         # collect m frames for input
         if self.frame < self.m:
             self.s_next_frames.append(self.preprocess_input(s_next))
+            self.prev_state = s_next
             self.frame += 1
             return self.Qfunction.get_loss() 
 
@@ -359,6 +368,9 @@ class KerasDQN(Agent):
         self.Qfunction.update(states, targets)
 
     def preprocess_input(self, state):
+        # I need to process the state with the previous state
+        # I take the max pixel value of the two frames
+        state = np.maximum(state, self.prev_state)
         state = np.asarray(state, dtype=np.float32)
         # convert rgb image to yuv image
         #yuv = cv2.cvtColor(state,cv2.COLOR_RGB2YUV)
