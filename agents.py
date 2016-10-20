@@ -279,6 +279,10 @@ class KerasDQN(Agent):
 
         self.replay_memory = ReplayMemory(memory_size, state_shape, dtype=np.uint8)
 
+           
+        # only a single frame 
+        self.prev_state = S.sample()
+
         # initial states and action
         states = [self.preprocess_input(S.sample()) for i in xrange(4)]
         if K.image_dim_ordering() == 'th':
@@ -288,9 +292,6 @@ class KerasDQN(Agent):
         self.state.fill(0)
         self.action = np.asarray(A.sample())
         self.action.fill(0)
-        
-        # only a single frame
-        self.prev_state = S.sample()
 
         self.time = 0
         self.episode = 0
