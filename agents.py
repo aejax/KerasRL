@@ -110,11 +110,12 @@ class Policy(object):
     
 
 class Agent(object):
-    def __init__(self, name=None):
+    def __init__(self, name=None, lr_mode='constant'):
         #self.S = S
         #self.A = S
         #self.policy = policy
         self.name = name
+        self.lr_mode = lr_mode
 
         #self.state_dim = get_space_dim(S)
         #self.action_dim = get_space_dim(A)      
@@ -430,17 +431,20 @@ class QLearning(Agent):
         self.S = S
         self.A = A
 
-        self.learning_rate = learning_rate
         self.gamma = gamma
 
-        super(QLearning, self).__init__(**kwargs)
+        self.Q = QTable(S, A)
+        self.policy = EpsilonGreedy(S, A, Qfunction=self.Q)
 
+        super(QLearning, self).__init__(**kwargs)
         if not self.name:
             self.name = 'QLearning'
-        
-        self.Q = QTable(S, A)
-        
-        self.policy = EpsilonGreedy(S, A, Qfunction=self.Q)
+
+        if self.lr_mode == 'constant':
+            self.learning_rate = learning_rate
+        else:
+            self.n = np.zeros_like(self.Q.table) #initialize as zero matrix with shape (s_dim, a_dim)
+            self.learning_rate = learning_rate
 
         self.state = 0
         self.action = 0
@@ -451,7 +455,13 @@ class QLearning(Agent):
         else:
             Q_est = r + self.gamma*self.Q(s_next).max()
         update = Q_est - self.Q(self.state, self.action)
-        updateQ = self.Q(self.state, self.action) + self.learning_rate*update
+
+        if self.lr_mode == 'constant':
+            updateQ = self.Q(self.state, self.action) + self.learning_rate*update
+        else:
+            self.n[self.state, self.action] += 1 # count updates
+            n = self.n[self.state, self.action]
+            updateQ = self.Q(self.state, self.action) + self.learning_rate(n)*update
         self.Q.update(updateQ, self.state, self.action)
 
         self.state = s_next
@@ -466,7 +476,6 @@ class DoubleQLearning(Agent):
         self.S = S
         self.A = A
 
-        self.learning_rate = learning_rate
         self.gamma = gamma
 
         super(DoubleQLearning, self).__init__(**kwargs)
@@ -476,6 +485,13 @@ class DoubleQLearning(Agent):
         
         self.Q_A = QTable(S, A)
         self.Q_B = QTable(S, A)
+
+        if self.lr_mode == 'constant':
+            self.learning_rate = learning_rate
+        else:
+            self.nA = np.zeros_like(self.Q_A.table) #initialize as zero matrix with shape (s_dim, a_dim)
+            self.nB = np.zeros_like(self.Q_B.table) #initialize as zero matrix with shape (s_dim, a_dim)
+            self.learning_rate = learning_rate
 
         def doubleQ(state):
             ave_Q = (self.Q_A(state) + self.Q_B(state)) / 2
@@ -496,7 +512,13 @@ class DoubleQLearning(Agent):
                 a_star = self.Q_A(s_next).argmax()
                 Q_est = r + self.gamma*self.Q_B(s_next, a_star)
             update = Q_est - self.Q_A(self.state, self.action)
-            updateA = self.Q_A(self.state, self.action) + self.learning_rate*update
+            if self.lr_mode == 'constant':
+                updateA = self.Q_A(self.state, self.action) + self.learning_rate*update
+            else:
+                self.nA[self.state, self.action] += 1 # count updates
+                n = self.nA[self.state, self.action]
+                updateA = self.Q_A(self.state, self.action) + self.learning_rate(n)*update
+            
             self.Q_A.update(updateA, self.state, self.action)
         else:
             if done:
@@ -505,7 +527,12 @@ class DoubleQLearning(Agent):
                 b_star = self.Q_B(s_next).argmax()
                 Q_est = r + self.gamma*self.Q_A(s_next, b_star)
             update = Q_est - self.Q_B(self.state, self.action)
-            updateB = self.Q_B(self.state, self.action) + self.learning_rate*update
+            if self.lr_mode == 'constant':
+                updateB = self.Q_B(self.state, self.action) + self.learning_rate*update
+            else:
+                self.nB[self.state, self.action] += 1 # count updates
+                n = self.nB[self.state, self.action]
+                updateB = self.Q_B(self.state, self.action) + self.learning_rate(n)*update
             self.Q_B.update(updateB, self.state, self.action)
 
         self.state = s_next
