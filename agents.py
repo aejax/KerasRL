@@ -3,6 +3,7 @@ import gym
 from keras.models import Model, Sequential, load_model
 from keras.layers import Convolution2D, Dense, Flatten
 from keras.preprocessing import image
+from sklearn.neighbors import KNeighborsRegressor
 import pickle as pkl
 
 from time import sleep
@@ -91,6 +92,46 @@ class KerasQ(ValueFunction):
     def get_loss(self):
         return self.loss
 
+    def create_model(self, optimizer):
+        model = Sequential()
+        layer = raw_input('Layer? ')
+        while layer != 'quit':
+            if layer == 'Dense':
+                o = eval(raw_input('Output dim? '))
+                a = raw_input('Activation? ')
+                model.add(Dense(o ,input_shape=self.S.shape, activation=a))
+            elif layer == 'Convolution2D':
+                nf = eval(raw_input('# Filters? '))
+                nr = eval(raw_input('# Rows? '))
+                nc = eval(raw_input('# Columns? '))
+                ss = eval(raw_input('Subsample? '))
+                a = raw_input('Activation? ')
+                model.add(Convolution2D(nf, nr, nc, input_shape=S.shape, activation=a, subsample=ss))
+            else:
+                print '{} is not a supported layer.'.format(layer)
+                print 'Type \'quit\' to quit.'
+            layer = raw_input('Layer? ')
+        model.compile(loss='mse', optimizer=optimizer)
+        self.model = model
+            
+class KNNQ(ValueFunction):
+    def __init__(self, S, A, n_neighbors=5, weights='uniform', algorithm='auto', metric='minkowski'):
+        self.S = S
+        self.A = A
+
+        self.states = []
+        self.targets = []
+
+        self.neigh = KNearestRegression(n_neighbors=n_neighbors, weights=weights, algorithm=algorithm, metric=metric)
+
+    def call(self, state):
+        return self.neigh.predict(state)
+
+    def update(self, state, target):
+        self.states.append(state)
+        self.targets.append(target)
+        self.neigh.fit(np.array(self.states), np,array(self.targets))
+        
 class Policy(object):
     def __init__(self, S, A):
         self.S = S
@@ -110,7 +151,7 @@ class Policy(object):
     
 
 class Agent(object):
-    def __init__(self, name=None, lr_mode='constant'):
+    def __init__(self, name='agent', lr_mode='constant'):
         #self.S = S
         #self.A = S
         #self.policy = policy
@@ -126,7 +167,12 @@ class Agent(object):
     def act(self):
         action = self.policy(self.state)
         self.action = action
-        return self.action   
+        return self.action
+
+    @staticmethod
+    def get_config():
+        return {'name': 'agent',
+                'lr_mode': 'constant'}
 
 class EpsilonGreedy(Policy):
     def __init__(self, S, A, Qfunction=QTable, epsilon=0.1):
@@ -229,7 +275,7 @@ class ReplayMemory(object):
         self.rewards = np.load(f_rewards)
 
 class KerasDQN(Agent):
-    def __init__(self, S, A, model=None, policy=EpsilonGreedy, gamma=0.99, memory_size=10000, update_freq=10000, batch_size=32, **kwargs):
+    def __init__(self, S, A, model=None, policy=EpsilonGreedy, gamma=0.99, memory_size=10000, update_freq=10000, batch_size=32, optimizer='rmsprop', **kwargs):
         self.S = S
         self.A = A
         assert type(A) == gym.spaces.Discrete
@@ -238,6 +284,9 @@ class KerasDQN(Agent):
         self.memory_size = memory_size
         self.update_freq = update_freq
         self.batch_size = batch_size
+
+        self.atari = False
+        self.simple = True
 
         super(KerasDQN, self).__init__(**kwargs)
 
@@ -248,13 +297,11 @@ class KerasDQN(Agent):
         else:
             raise TypeError
 
-        if not self.name:
+        if self.name == 'agent':
             self.name = 'DQN'
 
-        # Use provided model else use atari dqn model
-        if model != None:
-            self.model = model
-        else:
+        # Use provided model else use atari dqn model 
+        if self.atari:
             if K.image_dim_ordering() == 'th':
                 state_shape = (4,84,84)
             else:
@@ -268,10 +315,24 @@ class KerasDQN(Agent):
             model.add(Dense(512, activation='relu'))
             model.add(Dense(A.n))
 
-            model.compile(loss='mse', optimizer='rmsprop')
+            model.compile(loss='mse', optimizer=optimizer)
             self.model = model
 
-        self.Qfunction = KerasQ(S, A, self.model)
+            self.Qfunction = KerasQ(S, A, self.model)
+        elif self.simple:
+            model = Sequential()
+            model.add(Dense(64, input_shape=S.shape, activation='relu'))
+            model.add(Dense(A.n))
+            model.compile(loss='mse', optimizer=optimizer)
+            self.model = model
+    
+            self.Qfunction = KerasQ(S, A, self.model)
+
+        if model == None:
+            self.Qfunction = KerasQ(S, A, model)
+            self.Qfunction.create_model(optimizer)
+            self.model = self.Qfunction.model
+
         self.policy = policy(S, A, self.Qfunction)
 
         self.target_model = Sequential.from_config(self.model.get_config())
@@ -285,11 +346,14 @@ class KerasDQN(Agent):
         self.prev_state = S.sample()
 
         # initial states and action
-        states = [self.preprocess_input(S.sample()) for i in xrange(4)]
-        if K.image_dim_ordering() == 'th':
-            self.state = np.concatenate(states, axis=1)
+        if self.atari:
+            states = [self.preprocess_input(S.sample()) for i in xrange(4)]
+            if K.image_dim_ordering() == 'th':
+                self.state = np.concatenate(states, axis=1)
+            else:
+                self.state = np.concatenate(states, axis=-1)
         else:
-            self.state = np.concatenate(states, axis=-1)
+            self.state = self.preprocess_input(S.sample())
         self.state.fill(0)
         self.action = np.asarray(A.sample())
         self.action.fill(0)
@@ -309,21 +373,22 @@ class KerasDQN(Agent):
     def observe(self, s_next, r, done):
         self.frame_count += 1
         
-        # collect m frames for input
-        if self.frame < self.m:
-            self.s_next_frames.append(self.preprocess_input(s_next))
-            self.prev_state = s_next
-            self.frame += 1
-            return self.Qfunction.get_loss() 
+        if self.atari:
+            # collect m frames for input
+            if self.frame < self.m:
+                self.s_next_frames.append(self.preprocess_input(s_next))
+                self.prev_state = s_next
+                self.frame += 1
+                return self.Qfunction.get_loss() 
 
-        if K.image_dim_ordering() == 'th':    
-            s_next = np.concatenate(self.s_next_frames, axis=1)
+            if K.image_dim_ordering() == 'th':    
+                s_next = np.concatenate(self.s_next_frames, axis=1)
+            else:
+                s_next = np.concatenate(self.s_next_frames, axis=-1)
+            self.frame = 0
+            self.s_next_frames = []
         else:
-            s_next = np.concatenate(self.s_next_frames, axis=-1)
-        self.frame = 0
-        self.s_next_frames = []
-        
-        #s_next = s_next[np.newaxis,:] # turn vector into matrix
+            s_next = self.preprocess_input(s_next)
 
         self.done = done
         self.time_management(done)
@@ -340,16 +405,24 @@ class KerasDQN(Agent):
         return self.Qfunction.get_loss()
 
     def act(self, **kwargs):
-        # repeat action for action_repeat times
-        if self.frame_count % self.action_repeat == 0:
-            # count how many actions you have selected
-            self.action_count += 1
+        if self.atari:
+            # repeat action for action_repeat times
+            if self.frame_count % self.action_repeat == 0:
+                # count how many actions you have selected
+                self.action_count += 1
+                # for less than replay_start_size apply a random policy
+                if self.frame_count < self.replay_start_size:
+                    self.action = self.A.sample()
+                else:
+                    self.action = self.policy(self.state, **kwargs)
+            return self.action
+        else:
             # for less than replay_start_size apply a random policy
             if self.frame_count < self.replay_start_size:
                 self.action = self.A.sample()
             else:
                 self.action = self.policy(self.state, **kwargs)
-        return self.action
+            return self.action
 
     def batch_updates(self, minibatch):
         #for x in minibatch:
@@ -366,26 +439,34 @@ class KerasDQN(Agent):
             #print targets.shape
             #print actions
             #print targets[:,actions].shape
-            targets[:,actions] = (rewards + self.gamma * Qs.argmax(1))[:,np.newaxis]
+            targets[:,actions] = (rewards + self.gamma * Qs.max(1))[:,np.newaxis]
         self.Qfunction.update(states, targets)
 
     def preprocess_input(self, state):
-        # I need to process the state with the previous state
-        # I take the max pixel value of the two frames
-        state = np.maximum(state, self.prev_state)
-        state = np.asarray(state, dtype=np.float32)
-        # convert rgb image to yuv image
-        #yuv = cv2.cvtColor(state,cv2.COLOR_RGB2YUV)
-        yCbCr = Image.fromarray(state, 'YCbCr')
-        # extract the y channel
-        #y, u, v = cv2.split(yuv)
-        y, Cb, Cr = yCbCr.split()
-        # rescale to 84x84
-        #y_res = cv2.resize(y, (84,84), interpolation=cv2.INTER_AREA)
-        y_res = y.resize((84,84))
-        y_res = image.img_to_array(y_res)
-        y_res = y_res[np.newaxis,:,:]    
-        return y_res
+        if self.atari:
+            # I need to process the state with the previous state
+            # I take the max pixel value of the two frames
+            state = np.maximum(state, self.prev_state)
+            state = np.asarray(state, dtype=np.float32)
+            # convert rgb image to yuv image
+            #yuv = cv2.cvtColor(state,cv2.COLOR_RGB2YUV)
+            yCbCr = Image.fromarray(state, 'YCbCr')
+            # extract the y channel
+            #y, u, v = cv2.split(yuv)
+            y, Cb, Cr = yCbCr.split()
+            # rescale to 84x84
+            #y_res = cv2.resize(y, (84,84), interpolation=cv2.INTER_AREA)
+            y_res = y.resize((84,84))
+            y_res = image.img_to_array(y_res)
+            y_res = y_res[np.newaxis,:,:]    
+            return y_res
+        elif type(self.S) == gym.spaces.Discrete:
+            # one-hot encoding
+            s = np.zeros(self.S.n)
+            s[state] = 1
+            return s[np.newaxis,:] # turn vector into matrix
+        else:
+            return state[np.newaxis,:] # turn vector into matrix
 
     def time_management(self, done):
         self.time += 1
@@ -426,6 +507,18 @@ class KerasDQN(Agent):
         self.replay_memory.load(f_states, f_next_states, f_actions, f_rewards)
         self.policy.model = self.model
 
+    @staticmethod
+    def get_config():
+        config = {'policy': EpsilonGreedy,
+                  'model': None,
+                  'gamma': 0.99,
+                  'memory_size': 10000,
+                  'update_freq': 10000,
+                  'batch_size': 32,
+                  'optimizer': 'rmsprop'}
+        base_config = Agent.get_config()
+        return dict(list(config.items()) + list(base_config.items()))
+
 class QLearning(Agent):
     def __init__(self, S, A, policy=EpsilonGreedy, learning_rate=1e-3, gamma=0.99, **kwargs):         
         self.S = S
@@ -437,7 +530,7 @@ class QLearning(Agent):
         self.policy = EpsilonGreedy(S, A, Qfunction=self.Q)
 
         super(QLearning, self).__init__(**kwargs)
-        if not self.name:
+        if self.name == 'agent':
             self.name = 'QLearning'
 
         if self.lr_mode == 'constant':
@@ -470,6 +563,14 @@ class QLearning(Agent):
     def act(self, **kwargs):
         self.action = self.policy(self.state, **kwargs)
         return self.action
+
+    @staticmethod
+    def get_config():
+        config = {'policy': EpsilonGreedy,
+                  'learning_rate': 1e-3,
+                  'gamma': 0.99}
+        base_config = Agent.get_config()
+        return dict(list(config.items()) + list(base_config.items()))
      
 class DoubleQLearning(Agent):
     def __init__(self, S, A, policy=EpsilonGreedy, learning_rate=1e-3, gamma=0.99, **kwargs):         
@@ -480,7 +581,7 @@ class DoubleQLearning(Agent):
 
         super(DoubleQLearning, self).__init__(**kwargs)
 
-        if not self.name:
+        if self.name == 'agent':
             self.name = 'DoubleQ'
         
         self.Q_A = QTable(S, A)
@@ -542,6 +643,14 @@ class DoubleQLearning(Agent):
         self.action = self.policy(self.state, **kwargs)
         return self.action
 
+    @staticmethod
+    def get_config():
+        config = {'policy': EpsilonGreedy,
+                  'learning_rate': 1e-3,
+                  'gamma': 0.99}
+        base_config = Agent.get_config()
+        return dict(list(config.items()) + list(base_config.items()))
+
 def softmax(x):
     y = np.exp(x)
     return y / y.sum(-1)
@@ -554,7 +663,7 @@ class LinearPolicy(Policy):
         self.basis_fn = [lambda x: np.power(x,i) for i in xrange(self.degree + 1)]
         self.param_dim = len(self.basis_fn) * self.s_dim * self.a_dim
         
-    def call(self, state, params, ):
+    def call(self, state, params):
         # flatten the state so that it can work with the parameters
         if len(state.shape) > 1:
             state = np.ravel(state)
@@ -591,13 +700,14 @@ class CrossEntropy(Agent):
 
         super(CrossEntropy, self).__init__(**kwargs)
 
-        if not self.name:
+        if self.name == 'agent':
             self.name = 'CrossEntropy'
 
         self.i = 0 #sample counter varies between 0 and n_sample-1
         self.R = np.zeros(self.n_sample) # the collection of rewards
 
     def observe(self, s_next, r, done):
+        s_next = self.preprocess(s_next)
         # collect n parameter samples
         if self.i == 0:
             self.params = np.random.multivariate_normal(self.mean, np.diag(self.std), self.n_sample)
@@ -630,4 +740,24 @@ class CrossEntropy(Agent):
         else:
             self.action = predictor
         return self.action
+
+    def preprocess(self, state):
+        if type(self.S) == gym.spaces.Discrete:
+            # one-hot encoding
+            s = np.zeros(self.S.n)
+            s[state] = 1
+            return s
+        else:
+            return state
+
+    @staticmethod
+    def get_config():
+        config = {'policy': LinearPolicy,
+                  'n_sample': 100,
+                  'top_p': 0.2,
+                  'init_mean': None,
+                  'init_std': None}
+        base_config = Agent.get_config()
+        return dict(list(config.items()) + list(base_config.items()))
+                 
              
