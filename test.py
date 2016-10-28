@@ -112,7 +112,7 @@ def test_session(env_name, n_episode, interactive):
 
     n_episode = n_episode
     tMax = 10000
-    log_freq = 1
+    log_freq = 10
 
     def huber_loss(y_true, y_pred):
         err = y_pred - y_true
@@ -120,8 +120,8 @@ def test_session(env_name, n_episode, interactive):
 
     # Define your agent
     #agent = CrossEntropy(S,A)
-    memory_size =  10000
-    random_start = 10000
+    memory_size =  100000
+    random_start = 50000
     exploration_frames = 1000000
     loss = 'mse'
     opt = 'adam' #RMSprop(lr=0.00025)

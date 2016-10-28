@@ -292,12 +292,8 @@ class DQN(Agent):
 
         # update the target network
         if n % self.target_update_freq == 0:
-            print 'Updating target network.'
-            start = timeit.default_timer()
             self.targetQ.model.set_weights(self.Q.model.get_weights())
-            end = timeit.default_timer()
-            print 'Update time: {}'.format(end - start)
-
+        
         # preprocess the state, handling images specially
         if self.image:
             if self.h_count < self.history_len != 0:
@@ -313,7 +309,6 @@ class DQN(Agent):
             r = self.sumr
             self.sumr = 0
 
-            #print len(self.frames) ,next_state.shape
             self.h_count = 0
             self.frames = []
         else:
@@ -329,9 +324,6 @@ class DQN(Agent):
 
         # update the policy
         if self.action_count % self.update_freq == 0 and self.frame_count > self.random_start:
-            print 'Updating policy network.'
-            start = timeit.default_timer()
-
             indices = np.random.choice(len(self.memory), self.batch_size, replace=False)
             states = []
             actions = []
@@ -343,7 +335,6 @@ class DQN(Agent):
                 actions.append(action)
                 s_nexts.append(s_next)
                 rs.append(r)
-            print [state.shape for state in states]
             states = np.concatenate(states, axis=0)
             actions = np.array(actions)
             s_nexts = np.concatenate(s_nexts, axis=0)
@@ -351,16 +342,12 @@ class DQN(Agent):
 
             targets = np.zeros((self.batch_size, self.A.n))
             targets = self.Q(states)
-            #print 'UPDATE'
             if done:
                 targets[np.arange(self.batch_size), actions] = rs
             else:
                 Qs = self.targetQ(s_nexts)
                 targets[np.arange(self.batch_size), actions] = rs + self.gamma*Qs.max(1)
                 self.loss = self.policy.update(targets, states)
-
-            end = timeit.default_timer()
-            print 'Update time: {}'.format(end - start)
 
         self.state = next_state
         return self.loss
