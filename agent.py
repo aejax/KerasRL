@@ -1,6 +1,9 @@
 from value import *
 from collections import deque
 import copy
+from PIL import Image
+import keras.backend as K
+import timeit
 
 def softmax(x):
     y = np.exp(x)
@@ -227,7 +230,7 @@ class DoubleQLearning(Agent):
 
 class DQN(Agent):
     def __init__(self, S, A, gamma=0.99, Qfunction=None, model=None, loss='mse', optimizer='adam', 
-                 memory_size=10000, target_update_freq=1000, batch_size= 32, replay_start_size=50000, update_freq=4, 
+                 memory_size=10000, target_update_freq=1000, batch_size= 32, random_start=50000, update_freq=4, 
                  action_repeat=4, history_len=4, image=False, **kwargs):
         self.S = S
         self.A = A
@@ -253,21 +256,23 @@ class DQN(Agent):
         self.memory_size = memory_size
         self.target_update_freq = target_update_freq
         self.batch_size = batch_size
-        self.replay_start_size = replay_start_size
+        self.random_start = random_start
         self.update_freq = update_freq
         self.action_repeat = action_repeat
         self.history_len = history_len
         self.image = image
 
+        self.frames = []
         self.frame_count = 0
         self.action_count = 0
         self.sumr = 0
         self.loss = 0
+        self.h_count = 0
 
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
         if self.image:
-            self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=0)
+            self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
         else:
             self.state = self.preprocess(self.S.sample())
 
@@ -276,14 +281,19 @@ class DQN(Agent):
 
         # update the target network
         if n % self.target_update_freq == 0:
+            print 'Updating target network.'
+            start = timeit.default_timer()
             self.targetQ.model.set_weights(self.Q.model.get_weights())
+            end = timeit.default_timer()
+            print 'Update time: {}'.format(end - start)
 
         # preprocess the state, handling images specially
         if self.image:
-            if self.frame_count % self.history_len != 0:
+            if self.h_count < self.history_len != 0:
                 self.frames.append(self.preprocess(s_next))
                 self.prev_state = s_next 
                 self.sumr += r
+                self.h_count += 1
                 return self.loss
             if K.image_dim_ordering() == 'th':    
                 next_state = np.concatenate(self.frames, axis=1)
@@ -291,6 +301,9 @@ class DQN(Agent):
                 next_state = np.concatenate(self.frames, axis=-1)
             r = self.sumr
             self.sumr = 0
+
+            #print len(self.frames) ,next_state.shape
+            self.h_count = 0
             self.frames = []
         else:
             next_state = self.preprocess(s_next)
@@ -304,7 +317,10 @@ class DQN(Agent):
             self.memory.append(transition)
 
         # update the policy
-        if self.action_count % self.update_freq == 0 and self.frame_count > self.replay_start_size:
+        if self.action_count % self.update_freq == 0 and self.frame_count > self.random_start:
+            print 'Updating policy network.'
+            start = timeit.default_timer()
+
             indices = np.random.choice(len(self.memory), self.batch_size, replace=False)
             states = []
             actions = []
@@ -316,6 +332,7 @@ class DQN(Agent):
                 actions.append(action)
                 s_nexts.append(s_next)
                 rs.append(r)
+            #print [state.shape for state in states]
             states = np.concatenate(states, axis=0)
             actions = np.array(actions)
             s_nexts = np.concatenate(s_nexts, axis=0)
@@ -331,6 +348,9 @@ class DQN(Agent):
                 targets[np.arange(self.batch_size), actions] = rs + self.gamma*Qs.max(1)
                 self.loss = self.policy.update(targets, states)
 
+            end = timeit.default_timer()
+            print 'Update time: {}'.format(end - start)
+
         self.state = next_state
         return self.loss
 
@@ -338,8 +358,8 @@ class DQN(Agent):
         if self.frame_count % self.action_repeat == 0:
             # count how many actions you have selected
             self.action_count += 1
-            # for less than replay_start_size apply a random policy
-            if self.frame_count < self.replay_start_size:
+            # for less than random_start apply a random policy
+            if self.frame_count < self.random_start:
                 self.action = self.A.sample()
             else:
                 self.action = self.policy(self.state, **kwargs)

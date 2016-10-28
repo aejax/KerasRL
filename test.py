@@ -16,7 +16,7 @@ def yntotf(s):
         print '\'{}\' cannot be converted to True or False.'.format(s)
         return None
 
-def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
+def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, random_start):
     returns = []
     losses = []
     if monitor:
@@ -36,7 +36,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
                 if render and (episode+1)%log_freq == 0:
                     env.render(mode='human')
 
-                action = agent.act(n=count_steps-10000)
+                action = agent.act(n=count_steps-random_start)
                 observation, reward, done, info = env.step(action)
 
                 # End the episode at tMax
@@ -112,7 +112,7 @@ def test_session(env_name, n_episode, interactive):
 
     n_episode = n_episode
     tMax = 10000
-    log_freq = 10
+    log_freq = 1
 
     def huber_loss(y_true, y_pred):
         err = y_pred - y_true
@@ -120,14 +120,27 @@ def test_session(env_name, n_episode, interactive):
 
     # Define your agent
     #agent = CrossEntropy(S,A)
-    memory_size =       10000
-    replay_start_size = 10000
+    memory_size =  10000
+    random_start = 10000
+    exploration_frames = 1000000
     loss = 'mse'
     opt = 'adam' #RMSprop(lr=0.00025)
     name = 'DQN-atari'
+    atari = True    
     
     if atari:
-
+        if K.image_dim_ordering() == 'th':
+            state_shape = (4,84,84)
+        else:
+            state_shape = (84,84,4)
+        # default DQN for atari
+        model = Sequential()
+        model.add(Convolution2D(32, 8, 8, subsample=(4,4), input_shape=state_shape, activation='relu'))
+        model.add(Convolution2D(64, 4, 4, subsample=(2,2), activation='relu'))
+        model.add(Convolution2D(64, 3, 3, subsample=(1,1), activation='relu'))
+        model.add(Flatten())
+        model.add(Dense(512, activation='relu'))
+        model.add(Dense(A.n))
     else:
         model = Sequential()
         if type(S) == gym.spaces.Discrete:
@@ -138,16 +151,16 @@ def test_session(env_name, n_episode, interactive):
         model.add(Dense(A.n, activation='linear', name='l3'))
 
     Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt)
-    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=1000))
-    agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, replay_start_size=replay_start_size, batch_size=32,
-                target_update_freq=1000, update_freq=1, action_repeat=1, history_len=1, name=name)
+    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=exploration_frames))
+    agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=32,
+                target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=True, name=name)
 
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=1000000, memory_fit=100)
     #agent = QLearning(S, A, Q=knn, name='KNN')
 
     # Perform test
     begin = timeit.default_timer()
-    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir)
+    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, random_start)
     end = timeit.default_timer()
     dt = end - begin
     print 'Run time: {:}min {:.3}s'.format(dt // 60, dt % 60)
