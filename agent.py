@@ -280,7 +280,10 @@ class DQN(Agent):
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
         if self.image:
-            self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
+            if K.image_dim_ordering() == 'th': 
+                self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
+            else:
+                self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=-1)
         else:
             self.state = self.preprocess(self.S.sample())
 
@@ -340,7 +343,7 @@ class DQN(Agent):
                 actions.append(action)
                 s_nexts.append(s_next)
                 rs.append(r)
-            #print [state.shape for state in states]
+            print [state.shape for state in states]
             states = np.concatenate(states, axis=0)
             actions = np.array(actions)
             s_nexts = np.concatenate(s_nexts, axis=0)
