@@ -237,7 +237,15 @@ class DQN(Agent):
 
         if Qfunction == None:
             self.Q = KerasQ(S, A, model, loss=loss, optimizer=optimizer)
-            self.targetQ = copy.deepcopy(self.Q)
+            if hasattr(self.Q, 'model'):
+                self.targetQ = self.Q
+                config = self.Q.model.get_config()
+                model = Sequential.from_config(config)
+                model.set_weights(self.Q.model.get_weights())
+                self.targetQ.model = model
+                 
+            else:   
+                self.targetQ = copy.deepcopy(self.Q)
             #self.targetQ = KerasQ(S, A, model, loss=loss, optimizer=optimizer)
         else:
             self.Q = Qfunction
