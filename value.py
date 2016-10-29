@@ -63,6 +63,13 @@ class KerasQ(ValueFunction):
     def update(self, update, state, n=None):
         return self.model.train_on_batch(state, update)
 
+    def save(self, s_dir, name='Qmodel', **kwargs):
+        self.model.save('{}/{}.h5'.format(s_dir,name))
+
+    def load(self, s_dir, name='Qmodel', **kwargs):
+        self.model = load_model('{}/{}.h5'.format(s_dir,name))
+        self.model.compile(**kwargs)
+
 class KNNQ(ValueFunction):
     def __init__(self, S, A, n_neighbors=5, weights='uniform', algorithm='auto', metric='minkowski', memory_fit=100, memory_size=100, **kwargs):
         #assert self.lr_mode == 'constant', 'KNNQ is only compatible with constant learning rates.'

@@ -22,12 +22,16 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
     if monitor:
         env.monitor.start('tmp/{}'.format(agent.name), force=True)
 
-    count_steps = 0
+    if hasattr(agent, 'frame_count'):
+        count_steps = agent.frame_count
+    else:
+        count_steps = 0
     try:
         for episode in xrange(n_episode):
             observation = env.reset()
             done = False
             l_sum = agent.observe(observation, 0, done, count_steps)
+            count_steps += 1
             r_sum = 0
             timer = 0    
             while not done:
@@ -73,6 +77,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
     print 'Average Reward: {}'.format(ave_r)
     print 'Max 100 Episode Average Reward: {}'.format(rMVA.max())
     print 'Number of environment steps: {}'.format(count_steps)
+    print 'agent.frame_count: {}'.format(agent.frame_count)
 
     if plot:
         plt.figure()
@@ -87,7 +92,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
         plt.savefig('{}/{}.png'.format(s_dir, agent.name), format='png')
         plt.close('all')
 
-def test_session(env_name, n_episode, interactive):
+def test_session(env_name, n_episode, interactive, l_dir):
     env = gym.make(env_name)
     S = env.observation_space
     A = env.action_space
@@ -96,19 +101,27 @@ def test_session(env_name, n_episode, interactive):
         render = yntotf(raw_input('Render? [y/n] '))
         monitor = yntotf(raw_input('Monitor? [y/n] '))
         plot = yntotf(raw_input('Plot? [y/n] '))
+        save = yntotf(raw_input('Save? [y/n] '))
+        load = yntotf(raw_input('Load? [y/n] '))
     else:
         render = False
         monitor = False
         plot = True
+        save = False
+        load = False
 
-    # define the save directory
+    # define the save and load directory
     s_dir = env_name
     import os
     import os.path
     file_path = './' + s_dir
     if not os.path.exists(file_path):
         os.mkdir(s_dir)
-
+    if l_dir != '':
+        load = True
+        l_dir = ldir
+    elif l_dir == '' and load:
+        l_dir = s_dir
 
     n_episode = n_episode
     tMax = 10000
@@ -126,8 +139,8 @@ def test_session(env_name, n_episode, interactive):
     loss = 'mse'
     opt = 'adam' #RMSprop(lr=0.00025)
     name = 'DQN-atari'
-    atari = True    
-    
+    atari = True       
+        
     if atari:
         if K.image_dim_ordering() == 'th':
             state_shape = (4,84,84)
@@ -158,19 +171,38 @@ def test_session(env_name, n_episode, interactive):
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=1000000, memory_fit=100)
     #agent = QLearning(S, A, Q=knn, name='KNN')
 
+    if load:
+        print 'Loading agent from {}'.format(l_dir)
+        begin = timeit.default_timer()
+        agent.load(l_dir, loss=loss, optimizer=opt)
+
+        end = timeit.default_timer()
+        dt = end - begin
+        print 'Load time: {:}min {:.3}s'.format(dt // 60, dt % 60)
+
     # Perform test
+    print 'Beginning training for {} episodes.'.format(n_episode)
     begin = timeit.default_timer()
     run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, random_start)
     end = timeit.default_timer()
     dt = end - begin
     print 'Run time: {:}min {:.3}s'.format(dt // 60, dt % 60)
 
+    if save:
+        print 'Saving agent to {}'.format(s_dir)
+        begin = timeit.default_timer()
+        agent.save(s_dir)
+
+        end = timeit.default_timer()
+        dt = end - begin
+        print 'Save time: {:}min {:.3}s'.format(dt // 60, dt % 60)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RL testing script.')
     parser.add_argument('-e', '--environment', type=str, default='FrozenLake-v0')
     parser.add_argument('-n', '--n_episode', type=int, default=100)
+    parser.add_argument('-l', '--load_dir', type=str, default='')
     parser.add_argument('-i', '--interactive', action='store_true')
 
     args = parser.parse_args()
-    print args.n_episode
-    test_session(args.environment, args.n_episode, args.interactive)
+    test_session(args.environment, args.n_episode, args.interactive, args.load_dir)

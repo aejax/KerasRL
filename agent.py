@@ -4,12 +4,16 @@ import copy
 from PIL import Image
 import keras.backend as K
 import timeit
+import cPickle as pkl
+
+def islambda(v):
+    LAMBDA = lambda:0
+    return isinstance(v, type(LAMBDA)) and v.__name__ == LAMBDA.__name__
 
 def softmax(x):
     y = np.exp(x)
     return y / y.sum(-1)
 
-# My one randomness function
 def epsilon_greedy(A, epsilon=0.1):
     def f(action, **kwargs):
         rand = np.random.random()
@@ -19,7 +23,9 @@ def epsilon_greedy(A, epsilon=0.1):
             return A.sample()
     return f
 
-def SAepsilon_greedy(A, epsilon=0.1, final=1000, schedule=lambda n, f: (f-n)/f):
+def SAepsilon_greedy(A, epsilon=0.1, final=1000, schedule=None):
+    if schedule == None:
+        schedule = lambda n, f: (f-n)/f
     def f(action, n=0):
         if n <= final: 
             eps = max(epsilon, schedule(float(n),final))
@@ -67,11 +73,15 @@ class Policy(object):
     def update(self, update, *args, **kwargs):
         pass
 
-    def save(self, *args, **kwargs):
-        pass
+    def save(self, filename, **kwargs):
+        d = {'A': self.A, 'name': self.name}
+        pkl.dump(d, open(filename, 'w'))
 
-    def load(self, *args, **kwargs):
-        pass
+    def load(self, filename, **kwargs):
+        d = pkl.load(open(filename, 'r'))
+        for key, value in d.iteritems():
+            if hasattr(self, key):
+                self.__dict__[key] = value
 
 class MaxQ(Policy):
     def __init__(self, Qfunction, **kwargs):
@@ -85,11 +95,12 @@ class MaxQ(Policy):
     def update(self, update, *args, **kwargs):
         return self.Qfunction.update(update, *args, **kwargs)
 
-    def save(self, *args, **kwargs):
-        self.Qfunction.save(*args, **kwargs)
+    def save(self, s_dir, **kwargs):
+        self.Qfunction.save(s_dir, **kwargs)
 
-    def load(self, *args, **kwargs):
-        self.Qfunction.load(*args, **kwargs)
+    def load(self, l_dir, **kwargs):
+        self.Qfunction.load(l_dir, **kwargs)
+        
 
 class ConsensusQ(Policy):
     def __init__(self, Qfunctions, **kwargs):
@@ -106,13 +117,13 @@ class ConsensusQ(Policy):
     def update(self, update, idx=0, *args, **kwargs):
         self.Qfunctions[idx].update(update, *args, **kwargs)
 
-    def save(self, *args, **kwargs):
+    def save(self, s_dir, **kwargs):
         for Q in self.Qfunctions:
-            Q.save(*args, **kwargs)
+            Q.save(s_dir, **kwargs)
 
-    def load(self, *args, **kwargs):
+    def load(self, l_dir, **kwargs):
         for Q in self.Qfunctions:
-            Q.load(*args, **kwargs)
+            Q.load(l_dir, **kwargs)
 
 class Linear(Policy):
     def __init__(self, S=None, basis_fns=None, degree=1, **kwargs):
@@ -165,6 +176,12 @@ class Agent(object):
         self.action = self.policy(self.state, **kwargs)
         return self.action
 
+    def save(self, s_dir, **kwargs):
+        self.policy.save(s_dir, **kwargs)
+
+    def load(self, l_dir, **kwargs):
+        self.policy.load(l_dir, **kwargs)
+
 class QLearning(Agent):
     def __init__(self, S, A, Q=None, gamma=0.99, lr=1e-3, **kwargs):
         self.S = S
@@ -179,6 +196,7 @@ class QLearning(Agent):
 
         if self.policy == None:
             self.policy = MaxQ(A, self.Q)
+        self.Q = self.policy.Qfunction
 
         self.state = self.S.sample()
         self.action = self.A.sample()
@@ -195,8 +213,15 @@ class QLearning(Agent):
         self.state = s_next
         return 0
 
+    def save(self, s_dir, **kwargs):
+        self.policy.save(s_dir, **kwargs)
+        self.Q = self.policy.Qfunction # make sure that the Q function is updated
+
+    def load(self, l_dir, **kwargs):
+        self.policy.load(l_dir, **kwargs)
+
 class DoubleQLearning(Agent):
-    def __init__(self, S, A, policy=ConsensusQ, Qa=None, Qb=None, gamma=0.99, lr=1e-3, **kwargs):
+    def __init__(self, S, A, Qa=None, Qb=None, gamma=0.99, lr=1e-3, **kwargs):
         self.S = S
         self.A = A
         if Qa == None or Qb == None:
@@ -206,8 +231,12 @@ class DoubleQLearning(Agent):
             self.Qb = TableQ(S, A, lr=lr)
         else:
             self.Qa = Qa
-            self.Qb = Qb     
-        self.policy = policy(A, [self.Qa, self.Qb])
+            self.Qb = Qb
+        if policy == None:
+            self.policy = ConsensusQ(A, [self.Qa, self.Qb])
+        self.Qa = self.policy.Qfunctions[0] # make sure that the Q function is updated
+        self.Qb = self.policy.Qfunctions[1] # make sure that the Q function is updated
+
         self.gamma = gamma
 
         super(QLearning, self).__init__(self.policy, **kwargs)
@@ -384,6 +413,29 @@ class DQN(Agent):
             output = state
 
         return np.expand_dims(output, axis=0) #add axis for batch dimension
+
+    def save(self, s_dir='.'):
+        #self.Q.save('{}/Qmodel.h5'.format(s_dir))
+        self.targetQ.save(s_dir, name='targetQmodel')
+        self.policy.save(s_dir)
+        pkl.dump(self.memory, open('{}/memory.pkl'.format(s_dir),'w'))
+
+        session = {'frames':self.frames, 'frame_count':self.frame_count, 'action_count':self.action_count,
+                   'sumr':self.sumr, 'loss':self.loss, 'h_count':self.h_count,
+                   'action':self.action, 'prev_state':self.prev_state, 'state':self.state}
+        pkl.dump(session, open('{}/session.pkl'.format(s_dir),'w'))
+
+    def load(self,s_dir='.', **kwargs):
+        self.targetQ.load(s_dir, name='targetQmodel', **kwargs)
+        self.policy.load(s_dir, **kwargs)
+        self.Q = self.policy.Qfunction # make sure that the Q function is updated
+
+        self.memory = pkl.load(open('{}/memory.pkl'.format(s_dir), 'r'))
+        session = pkl.load(open('{}/session.pkl'.format(s_dir),'r'))
+        for key, value in session.iteritems():
+            if hasattr(self, key):
+                self.__dict__[key] = value
+        
 
 class CrossEntropy(Agent):
     def __init__(self, S, A, n_sample=100, top_p=0.2, init_mean=None, init_std=None, **kwargs):
