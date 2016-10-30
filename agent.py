@@ -160,8 +160,9 @@ class Linear(Policy):
         return predictor
  
 class Agent(object):
-    def __init__(self, policy=None, name=None):
+    def __init__(self, policy=None, name=None, random_start=0):
         self.policy = policy
+        self.random_start = random_start
         if name == None:
             self.name = self.__class__.__name__
         else:
@@ -195,7 +196,7 @@ class QLearning(Agent):
         super(QLearning, self).__init__(**kwargs)
 
         if self.policy == None:
-            self.policy = MaxQ(A, self.Q)
+            self.policy = MaxQ(self.Q)
         self.Q = self.policy.Qfunction
 
         self.state = self.S.sample()
@@ -209,9 +210,11 @@ class QLearning(Agent):
             Q_est = r + self.gamma*self.Q(s_next).max()
         #print Q_est - self.Q(self.state, self.action)
         update[self.action] = Q_est - self.Q(self.state, self.action)
+        td = update[self.action]
         self.policy.update(update, self.state, n=n)        
         self.state = s_next
-        return 0
+        #print td, self.Q(self.state, self.action)
+        return td
 
     def save(self, s_dir, **kwargs):
         self.policy.save(s_dir, **kwargs)
@@ -233,7 +236,7 @@ class DoubleQLearning(Agent):
             self.Qa = Qa
             self.Qb = Qb
         if policy == None:
-            self.policy = ConsensusQ(A, [self.Qa, self.Qb])
+            self.policy = ConsensusQ([self.Qa, self.Qb])
         self.Qa = self.policy.Qfunctions[0] # make sure that the Q function is updated
         self.Qb = self.policy.Qfunctions[1] # make sure that the Q function is updated
 
@@ -242,24 +245,26 @@ class DoubleQLearning(Agent):
         super(QLearning, self).__init__(self.policy, **kwargs)
 
     def observe(self, s_next, r, done, n):
+        update = np.zeros(self.A.n)
         if done:
             Q_est = r
         else:
             if np.random.rand() > 0.5:
                 idx = 0
                 Q_est = r + self.gamma*self.Qb(s_next).max()
-                update = Q_est - self.Qa(self.state, self.action)
+                update[self.action] = Q_est - self.Qa(self.state, self.action)
             else:
                 idx = 1
                 Q_est = r + self.gamma*self.Qa(s_next).max()
-                update = Q_est - self.Qb(self.state, self.action)
-        self.policy.update(update, self.state, self.action, idx=idx, n=n)
+                update[self.action] = Q_est - self.Qb(self.state, self.action)
+        td = update[self.action]
+        self.policy.update(update, self.state, idx=idx, n=n)
         self.state = s_next
-        return update
+        return td
 
 class DQN(Agent):
     def __init__(self, S, A, gamma=0.99, Qfunction=None, model=None, loss='mse', optimizer='adam', 
-                 memory_size=10000, target_update_freq=1000, batch_size= 32, random_start=50000, update_freq=4, 
+                 memory_size=10000, target_update_freq=1000, batch_size= 32, update_freq=4, 
                  action_repeat=4, history_len=4, image=False, **kwargs):
         self.S = S
         self.A = A
@@ -293,7 +298,6 @@ class DQN(Agent):
         self.memory_size = memory_size
         self.target_update_freq = target_update_freq
         self.batch_size = batch_size
-        self.random_start = random_start
         self.update_freq = update_freq
         self.action_repeat = action_repeat
         self.history_len = history_len

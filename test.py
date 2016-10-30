@@ -5,6 +5,10 @@ import keras.backend as K
 import gym
 import timeit
 import argparse
+
+import matplotlib
+#Force matplotlib to use any Xwindows backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 def yntotf(s):
@@ -77,7 +81,6 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
     print 'Average Reward: {}'.format(ave_r)
     print 'Max 100 Episode Average Reward: {}'.format(rMVA.max())
     print 'Number of environment steps: {}'.format(count_steps)
-    print 'agent.frame_count: {}'.format(agent.frame_count)
 
     if plot:
         plt.figure()
@@ -124,7 +127,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
         l_dir = s_dir
 
     n_episode = n_episode
-    tMax = 10000
+    tMax = 200
     log_freq = 10
 
     def huber_loss(y_true, y_pred):
@@ -139,7 +142,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
     loss = 'mse'
     opt = 'adam' #RMSprop(lr=0.00025)
     name = 'DQN-atari'
-    atari = True       
+    atari = False       
         
     if atari:
         if K.image_dim_ordering() == 'th':
@@ -163,13 +166,13 @@ def test_session(env_name, n_episode, interactive, l_dir):
         model.add(Dense(20, activation='relu', name='l2'))
         model.add(Dense(A.n, activation='linear', name='l3'))
 
-    Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt)
-    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=exploration_frames))
-    agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=32,
-                target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=True, name=name)
+    #Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt)
+    #policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=exploration_frames))
+    #agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=32,
+    #            target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=True, name=name)
 
-    #knn = KNNQ(S, A, n_neighbors=5, memory_size=1000000, memory_fit=100)
-    #agent = QLearning(S, A, Q=knn, name='KNN')
+    knn = KNNQ(S, A, n_neighbors=5, memory_size=100000, memory_fit=100, lr=1.0)
+    agent = QLearning(S, A, Q=knn, name='KNN-1', random_start=random_start)
 
     if load:
         print 'Loading agent from {}'.format(l_dir)
