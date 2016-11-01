@@ -5,6 +5,7 @@ from keras.layers import Convolution2D, Dense, Flatten
 from keras.preprocessing import image
 from sklearn.neighbors import KNeighborsRegressor
 import types
+from collections import deque
 
 def get_space_dim(Space):
     # get the dimensions of the spaces
@@ -20,13 +21,15 @@ def get_space_dim(Space):
     return s_dim
 
 class ValueFunction(object):
-    def __init__(self, name=None, lr=1e-3):
+    def __init__(self, name=None, lr=1e-3, update_mode='update'):
         if name == None:
             self.name = self.__class__.__name__
 
         # create a constant function if not a function
         if type(lr) != types.FunctionType:
             self.lr = lambda n: lr
+
+        self.update_mode = update_mode
 
     def __call__(self, state, *args):
         return self.call(state, *args)
@@ -75,8 +78,8 @@ class KNNQ(ValueFunction):
         #assert self.lr_mode == 'constant', 'KNNQ is only compatible with constant learning rates.'
         self.S = S
         self.A = A
-        self.states = []
-        self.targets = []
+        self.states = deque([])
+        self.targets = deque([])
         self.memory_fit = memory_fit
         self.memory_size = memory_size
         self.count = 0
@@ -84,6 +87,7 @@ class KNNQ(ValueFunction):
         self.neigh = KNeighborsRegressor(n_neighbors=n_neighbors, weights=weights, algorithm=algorithm, metric=metric)
 
         super(KNNQ, self).__init__(**kwargs)
+        self.update_mode = 'set'
 
     def call(self, state, *args):
         if len(args) > 0:
@@ -106,11 +110,15 @@ class KNNQ(ValueFunction):
         target = self.lr(n) * update
         # control memory growth
         if len(self.states) >= self.memory_size:
-            idx = np.random.choice(len(self.states))
-            self.states.pop(idx)
-            self.targets.pop(idx)
-            self.states.insert(idx, state)
-            self.targets.insert(idx, target)
+            #idx = np.random.choice(len(self.states))
+            #self.states.pop(idx)
+            #self.targets.pop(idx)
+            #self.states.insert(idx, state)
+            #self.targets.insert(idx, target)
+            self.states.popleft()
+            self.targets.popleft()
+            self.states.append(state)
+            self.targets.append(target)
         else:
             self.states.append(state)
             self.targets.append(target)

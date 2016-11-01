@@ -209,8 +209,11 @@ class QLearning(Agent):
         else:
             Q_est = r + self.gamma*self.Q(s_next).max()
         #print Q_est - self.Q(self.state, self.action)
-        update[self.action] = Q_est - self.Q(self.state, self.action)
-        td = update[self.action]
+        td = Q_est - self.Q(self.state, self.action)
+        if self.Q.update_mode == 'set':
+            update[self.action] = Q_est
+        else:
+            update[self.action] = td
         self.policy.update(update, self.state, n=n)        
         self.state = s_next
         #print td, self.Q(self.state, self.action)
@@ -400,8 +403,9 @@ class DQN(Agent):
         if self.image:
             # I need to process the state with the previous state
             # I take the max pixel value of the two frames
-            state = np.maximum(state, self.prev_state)
-            state = np.asarray(state, dtype=np.float32)
+            state[0] = np.maximum(state[0], self.prev_state[0])
+            state[1] = np.maximum(state[1], self.prev_state[1])
+            state[2] = np.maximum(state[2], self.prev_state[2])
             # convert rgb image to yuv image
             yCbCr = Image.fromarray(state, 'YCbCr')
             # extract the y channel
