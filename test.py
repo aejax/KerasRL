@@ -127,7 +127,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
         l_dir = s_dir
 
     n_episode = n_episode
-    tMax = 200
+    tMax = 10000
     log_freq = 10
 
     def huber_loss(y_true, y_pred):
@@ -136,12 +136,12 @@ def test_session(env_name, n_episode, interactive, l_dir):
 
     # Define your agent
     #agent = CrossEntropy(S,A)
-    memory_size =  100000
+    memory_size =  50000
     random_start = 50000
     exploration_frames = 1000000
-    loss = 'mse'
-    opt = 'adam' #RMSprop(lr=0.00025)
-    name = 'DQN-atari'
+    loss = huber_loss
+    opt = RMSprop(lr=0.00025)
+    name = 'DQN-1'
     atari = True       
         
     if atari:
@@ -177,7 +177,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
     if load:
         print 'Loading agent from {}'.format(l_dir)
         begin = timeit.default_timer()
-        agent.load(l_dir, loss=loss, optimizer=opt)
+        agent.load(l_dir, loss=loss, optimizer=opt, custom_objects={'huber_loss':huber_loss})
 
         end = timeit.default_timer()
         dt = end - begin

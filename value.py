@@ -69,8 +69,8 @@ class KerasQ(ValueFunction):
     def save(self, s_dir, name='Qmodel', **kwargs):
         self.model.save('{}/{}.h5'.format(s_dir,name))
 
-    def load(self, s_dir, name='Qmodel', **kwargs):
-        self.model = load_model('{}/{}.h5'.format(s_dir,name))
+    def load(self, s_dir, name='Qmodel', custom_objects=None, **kwargs):
+        self.model = load_model('{}/{}.h5'.format(s_dir,name) custom_objects=custom_objects)
         self.model.compile(**kwargs)
 
 class KNNQ(ValueFunction):
