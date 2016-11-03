@@ -295,7 +295,7 @@ class DQN(Agent):
         assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
         self.Q = self.policy.Qfunction # make sure that the Q function is updated
 
-        self.memory = deque([])
+        self.memory = deque(maxlen=memory_size) #deque handles length
 
         self.gamma = gamma
         self.memory_size = memory_size
@@ -306,22 +306,22 @@ class DQN(Agent):
         self.history_len = history_len
         self.image = image
 
-        self.frames = []
         self.frame_count = 0
         self.action_count = 0
-        self.sumr = 0
         self.loss = 0
-        self.h_count = 0
 
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
+
         if self.image:
             if K.image_dim_ordering() == 'th': 
-                self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
+                self.state = np.concatenate([self._preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
             else:
-                self.state = np.concatenate([self.preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=-1)
+                self.state = np.concatenate([self._preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=-1)
         else:
-            self.state = self.preprocess(self.S.sample())
+            self.state = self._preprocess(self.S.sample())
+        self.Q(self.state)
+        self.targetQ(self.state)
 
     def observe(self, s_next, r, done, n):
         self.frame_count += 1
@@ -329,63 +329,24 @@ class DQN(Agent):
         # update the target network
         if n % self.target_update_freq == 0:
             self.targetQ.model.set_weights(self.Q.model.get_weights())
-        
-        # preprocess the state, handling images specially
-        if self.image:
-            if self.h_count < self.history_len != 0:
-                self.frames.append(self.preprocess(s_next))
-                self.prev_state = s_next 
-                self.sumr += r
-                self.h_count += 1
-                return self.loss
-            if K.image_dim_ordering() == 'th':    
-                next_state = np.concatenate(self.frames, axis=1)
-            else:
-                next_state = np.concatenate(self.frames, axis=-1)
-            r = self.sumr
-            self.sumr = 0
 
-            self.h_count = 0
-            self.frames = []
-        else:
-            next_state = self.preprocess(s_next)
-
-        # add transition to replay memory            
-        transition = (self.state, self.action, next_state, r)
-        if len(self.memory) < self.memory_size:
-            self.memory.append(transition)
-        else:
-            self.memory.popleft()
-            self.memory.append(transition)
+        next_state = self._preprocess(s_next)
+        self.prev_state = s_next
 
         # update the policy
         if self.action_count % self.update_freq == 0 and self.frame_count > self.random_start:
-            indices = np.random.choice(len(self.memory), self.batch_size, replace=False)
-            states = []
-            actions = []
-            s_nexts = []
-            rs = []
-            for i in xrange(indices.shape[0]):
-                state, action, s_next, r = self.memory[indices[i]]
-                states.append(state)
-                actions.append(action)
-                s_nexts.append(s_next)
-                rs.append(r)
-            states = np.concatenate(states, axis=0)
-            actions = np.array(actions)
-            s_nexts = np.concatenate(s_nexts, axis=0)
-            rs = np.array(rs)
+            states, actions, s_nexts, rs, dones = self._get_batch()
 
             targets = np.zeros((self.batch_size, self.A.n))
             targets = self.Q(states)
-            if done:
-                targets[np.arange(self.batch_size), actions] = rs
-            else:
-                Qs = self.targetQ(s_nexts)
-                targets[np.arange(self.batch_size), actions] = rs + self.gamma*Qs.max(1)
-                self.loss = self.policy.update(targets, states)
+
+            Qs = self.targetQ(s_nexts)
+            targets[np.arange(self.batch_size), actions] = np.where(dones, rs, rs + self.gamma*Qs.max(1))
+            self.loss = self.policy.update(targets, states)
 
         self.state = next_state
+        self.r = r
+        self.done = done
         return self.loss
 
     def act(self, **kwargs):
@@ -396,10 +357,21 @@ class DQN(Agent):
             if self.frame_count < self.random_start:
                 self.action = self.A.sample()
             else:
-                self.action = self.policy(self.state, **kwargs)
+                idx = len(self.memory)-self.history_len-1
+                state = self._get_history(idx)
+                self.action = self.policy(state, **kwargs)
+
+        transition = (self.state, self.action, self.r, self.done)
+        self.memory.append(transition)
         return self.action
+
+    def _get_memory_size(self):
+        transition = self.memory[-1]
+        size = transition[0].nbytes
+        size *= len(self.memory)
+        return size
     
-    def preprocess(self, state):
+    def _preprocess(self, state):
         if self.image:
             # I need to process the state with the previous state
             # I take the max pixel value of the two frames
@@ -413,6 +385,7 @@ class DQN(Agent):
             # rescale to 84x84
             y_res = y.resize((84,84))
             output = image.img_to_array(y_res)
+            output = np.array(output, dtype=np.uint8) #keep memory small
         elif type(self.S) == gym.spaces.Discrete:
             # one-hot encoding
             output = np.zeros(self.S.n)
@@ -422,15 +395,75 @@ class DQN(Agent):
 
         return np.expand_dims(output, axis=0) #add axis for batch dimension
 
+    def _get_batch(self):
+        # assume that the memory is organized as follows:
+        #   first a state is recorded,
+        #   then an action based on that state is recorded,
+        #   then a reward is recorded,
+        #   followed by a subsequent state.
+        # e.g. (r0, s0, a0, r1, s1, a1, r2, ..., sN-1, aN-1, rN)
+        # the current state input is of length history_len,
+        # history_len = 4: state = (s0, s1, s2, s3)
+        # the current action is that associated with the last four states,
+        # state = (s0, s1, s2, s3); action = (a3); reward = (r4)
+        # what about the next state? The next state is what the agent sees next:
+        # next_state = (s1, s2, s3, s4)
+        # what about end of episode cases? i.e. state = (sN-4, sN-3, sN-2, sN-1)
+        # here the next state that the agent gets is from the next episode (s0, s1, s2, s3)
+        # in this case we ignore the next state and just use the reward in the update
+        # we need to include a end of episode flag, (s, a, r, d), in the memory
+
+        indices = np.random.choice(len(self.memory) - self.history_len -1, self.batch_size, replace=False)
+        states = []
+        actions = []
+        s_nexts = []
+        rs = []
+        dones = []
+        for i in xrange(indices.shape[0]):
+            idx = indices[i]
+            # if done get a new index
+            m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+            done = reduce(lambda x,y: x or y, [memory[-1] for memory in m_slice])
+            while done:
+                idx = np.random.randint(len(self.memory) - self.history_len -1)
+                m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+                done = reduce(lambda x,y: x or y, [memory[-1] for memory in m_slice])
+            
+            state = self._get_history(idx)
+            action = self.memory[idx + self.history_len][1]
+            next_state = self._get_history(idx+1)
+            reward = self.memory[idx + self.history_len + 1][2]
+            done =   self.memory[idx + self.history_len + 1][3]
+
+            states.append(state)
+            actions.append(action)
+            s_nexts.append(next_state)
+            rs.append(reward)
+            dones.append(done)
+     
+        states = np.concatenate(states, axis=0)
+        actions = np.array(actions)
+        s_nexts = np.concatenate(s_nexts, axis=0)
+        rs = np.array(rs)
+        dones = np.array(dones)
+        return states, actions, s_nexts, rs, dones
+
+    def _get_history(self, idx):
+        m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+        state = [memory[0] for memory in m_slice]
+        if K.image_dim_ordering() == 'th':    
+            state = np.concatenate(state, axis=1)
+        else:
+            state = np.concatenate(state, axis=-1)
+        return state     
+
     def save(self, s_dir='.'):
-        #self.Q.save('{}/Qmodel.h5'.format(s_dir))
         self.targetQ.save(s_dir, name='targetQmodel')
         self.policy.save(s_dir)
         pkl.dump(self.memory, open('{}/memory.pkl'.format(s_dir),'w'))
 
-        session = {'frames':self.frames, 'frame_count':self.frame_count, 'action_count':self.action_count,
-                   'sumr':self.sumr, 'loss':self.loss, 'h_count':self.h_count,
-                   'action':self.action, 'prev_state':self.prev_state, 'state':self.state}
+        session = {'frame_count':self.frame_count, 'action_count':self.action_count,
+                   'loss':self.loss, 'action':self.action, 'prev_state':self.prev_state, 'state':self.state}
         pkl.dump(session, open('{}/session.pkl'.format(s_dir),'w'))
 
     def load(self,s_dir='.', **kwargs):

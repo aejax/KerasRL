@@ -136,13 +136,14 @@ def test_session(env_name, n_episode, interactive, l_dir):
 
     # Define your agent
     #agent = CrossEntropy(S,A)
-    memory_size =  50000
+    memory_size =  1000000
     random_start = 50000
     exploration_frames = 1000000
     loss = huber_loss
     opt = RMSprop(lr=0.00025)
-    name = 'DQN-1'
-    atari = True       
+    name = 'DQN-new'
+    atari = True
+    image = True       
         
     if atari:
         if K.image_dim_ordering() == 'th':
@@ -169,7 +170,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
     Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt)
     policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=exploration_frames))
     agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=32,
-                target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=True, name=name)
+                target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=image, name=name)
 
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=100000, memory_fit=100, lr=1.0, weights='distance')
     #agent = QLearning(S, A, Q=knn, name='KNN-1', random_start=random_start)
