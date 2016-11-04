@@ -312,6 +312,8 @@ class DQN(Agent):
 
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
+        self.r = 0
+        self.done = False
 
         if self.image:
             if K.image_dim_ordering() == 'th': 
@@ -322,6 +324,7 @@ class DQN(Agent):
             self.state = self._preprocess(self.S.sample())
         self.Q(self.state)
         self.targetQ(self.state)
+        self.state = self.prev_state
 
     def observe(self, s_next, r, done, n):
         self.frame_count += 1
@@ -334,7 +337,8 @@ class DQN(Agent):
         self.prev_state = s_next
 
         # update the policy
-        if self.action_count % self.update_freq == 0 and self.frame_count > self.random_start:
+        start = timeit.default_timer()
+        if self.frame_count % (self.action_repeat*self.update_freq) == 0 and self.frame_count > self.random_start:        
             states, actions, s_nexts, rs, dones = self._get_batch()
 
             targets = np.zeros((self.batch_size, self.A.n))
@@ -342,7 +346,7 @@ class DQN(Agent):
 
             Qs = self.targetQ(s_nexts)
             targets[np.arange(self.batch_size), actions] = np.where(dones, rs, rs + self.gamma*Qs.max(1))
-            self.loss = self.policy.update(targets, states)
+            self.loss = self.policy.update(targets, states)         
 
         self.state = next_state
         self.r = r
