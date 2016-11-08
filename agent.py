@@ -266,7 +266,7 @@ class DoubleQLearning(Agent):
         return td
 
 class DQN(Agent):
-    def __init__(self, S, A, gamma=0.99, Qfunction=None, model=None, loss='mse', optimizer='adam', 
+    def __init__(self, S, A, gamma=0.99, Qfunction=None, targetQfunction=None, model=None, loss='mse', optimizer='adam', 
                  memory_size=10000, target_update_freq=1000, batch_size= 32, update_freq=4, 
                  action_repeat=4, history_len=4, image=False, double=True, bounds=False, update_cycles=None, **kwargs):
 
@@ -276,25 +276,42 @@ class DQN(Agent):
 
         if self.policy == None:
             if Qfunction == None:
+                assert model != None
                 Qfunction = KerasQ(S, A, model, loss=loss, optimizer=optimizer, bounds=bounds)
-            else:
-                self.policy = MaxQ(Qfunction)
-                self.Q = self.policy.Qfunction # make sure that the Q function is updated
-                if hasattr(self.Q, 'model'):
-                    self.targetQ = self.Q
-                    config = self.Q.model.get_config()
-                    if type(self.Q.model) == Model:
-                        model = Model.from_config(config)
-                    elif type(self.Q.model) == Sequential:
-                        model = Sequential.from_config(config)
-                    model.set_weights(self.Q.model.get_weights())
-                    self.targetQ.model = model
-                else:   
-                    self.targetQ = copy.deepcopy(self.Q)
+            if targetQfunction == None:
+                assert model != None
+                if Qfunction == None:
+                    config = model.get_config()
+                    if type(model) == Model:
+                        model2 = Model.from_config(config)
+                    elif type(model) == Sequential:
+                        model2 = Sequential.from_config(config)
+                    model2.set_weights(model.get_weights())
+                else:
+                    model2 = model
+                targetQfunction = KerasQ(S, A, model2, loss=loss, optimizer=optimizer, bounds=bounds)
+            self.policy = MaxQ(Qfunction)
+            self.Q = self.policy.Qfunction # make sure that the Q function is updated
+            self.targetQ = targetQfunction
+            """if hasattr(self.Q, 'model'):
+                self.targetQ = self.Q
+                config = self.Q.model.get_config()
+                if type(self.Q.model) == Model:
+                    model = Model.from_config(config)
+                elif type(self.Q.model) == Sequential:
+                    model = Sequential.from_config(config)
+                model.set_weights(self.Q.model.get_weights())
+                self.targetQ.model = model
+            else:   
+                self.targetQ = copy.deepcopy(self.Q)"""
     
         else:
             assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
+            if targetQfunction == None:
+                assert model != None
+                targetQfunction = KerasQ(S, A, model, loss=loss, optimizer=optimizer, bounds=bounds)
             self.Q = self.policy.Qfunction # make sure that the Q function is updated
+            self.targetQ = targetQfunction
             """if hasattr(self.Q, 'model'):
                 self.targetQ = self.Q
                 config = self.Q.model.get_config()
@@ -305,8 +322,8 @@ class DQN(Agent):
                 model.set_weights(self.Q.model.get_weights())
                 print self.policy.Qfunction.model.optimizer
                 self.targetQ.model = model
-            else:"""   
-            self.targetQ = copy.deepcopy(self.Q)
+            else:  
+                self.targetQ = copy.deepcopy(self.Q)"""
 
         self.memory = deque(maxlen=memory_size) #deque handles length
 
