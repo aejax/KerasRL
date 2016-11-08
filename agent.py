@@ -293,17 +293,6 @@ class DQN(Agent):
             self.policy = MaxQ(Qfunction)
             self.Q = self.policy.Qfunction # make sure that the Q function is updated
             self.targetQ = targetQfunction
-            """if hasattr(self.Q, 'model'):
-                self.targetQ = self.Q
-                config = self.Q.model.get_config()
-                if type(self.Q.model) == Model:
-                    model = Model.from_config(config)
-                elif type(self.Q.model) == Sequential:
-                    model = Sequential.from_config(config)
-                model.set_weights(self.Q.model.get_weights())
-                self.targetQ.model = model
-            else:   
-                self.targetQ = copy.deepcopy(self.Q)"""
     
         else:
             assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
@@ -312,18 +301,6 @@ class DQN(Agent):
                 targetQfunction = KerasQ(S, A, model, loss=loss, optimizer=optimizer, bounds=bounds)
             self.Q = self.policy.Qfunction # make sure that the Q function is updated
             self.targetQ = targetQfunction
-            """if hasattr(self.Q, 'model'):
-                self.targetQ = self.Q
-                config = self.Q.model.get_config()
-                if type(self.Q.model) == Model:
-                    model = Model.from_config(config)
-                elif type(self.Q.model) == Sequential:
-                    model = Sequential.from_config(config)
-                model.set_weights(self.Q.model.get_weights())
-                print self.policy.Qfunction.model.optimizer
-                self.targetQ.model = model
-            else:  
-                self.targetQ = copy.deepcopy(self.Q)"""
 
         self.memory = deque(maxlen=memory_size) #deque handles length
 
