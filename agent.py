@@ -92,8 +92,8 @@ class MaxQ(Policy):
     def call(self, state, **kwargs):
         return self.Qfunction(state).argmax()
 
-    def update(self, update, *args, **kwargs):
-        return self.Qfunction.update(update, *args, **kwargs)
+    def update(self, update, state, **kwargs):
+        return self.Qfunction.update(update, state, **kwargs)
 
     def save(self, s_dir, **kwargs):
         self.Qfunction.save(s_dir, **kwargs)
@@ -268,32 +268,45 @@ class DoubleQLearning(Agent):
 class DQN(Agent):
     def __init__(self, S, A, gamma=0.99, Qfunction=None, model=None, loss='mse', optimizer='adam', 
                  memory_size=10000, target_update_freq=1000, batch_size= 32, update_freq=4, 
-                 action_repeat=4, history_len=4, image=False, **kwargs):
+                 action_repeat=4, history_len=4, image=False, double=True, bounds=False, update_cycles=None, **kwargs):
+
+        super(DQN, self).__init__(**kwargs)
         self.S = S
         self.A = A
 
-        if Qfunction == None:
-            self.Q = KerasQ(S, A, model, loss=loss, optimizer=optimizer)
-            if hasattr(self.Q, 'model'):
+        if self.policy == None:
+            if Qfunction == None:
+                Qfunction = KerasQ(S, A, model, loss=loss, optimizer=optimizer, bounds=bounds)
+            else:
+                self.policy = MaxQ(Qfunction)
+                self.Q = self.policy.Qfunction # make sure that the Q function is updated
+                if hasattr(self.Q, 'model'):
+                    self.targetQ = self.Q
+                    config = self.Q.model.get_config()
+                    if type(self.Q.model) == Model:
+                        model = Model.from_config(config)
+                    elif type(self.Q.model) == Sequential:
+                        model = Sequential.from_config(config)
+                    model.set_weights(self.Q.model.get_weights())
+                    self.targetQ.model = model
+                else:   
+                    self.targetQ = copy.deepcopy(self.Q)
+    
+        else:
+            assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
+            self.Q = self.policy.Qfunction # make sure that the Q function is updated
+            """if hasattr(self.Q, 'model'):
                 self.targetQ = self.Q
                 config = self.Q.model.get_config()
-                model = Sequential.from_config(config)
+                if type(self.Q.model) == Model:
+                    model = Model.from_config(config)
+                elif type(self.Q.model) == Sequential:
+                    model = Sequential.from_config(config)
                 model.set_weights(self.Q.model.get_weights())
+                print self.policy.Qfunction.model.optimizer
                 self.targetQ.model = model
-                 
-            else:   
-                self.targetQ = copy.deepcopy(self.Q)
-            #self.targetQ = KerasQ(S, A, model, loss=loss, optimizer=optimizer)
-        else:
-            self.Q = Qfunction
+            else:"""   
             self.targetQ = copy.deepcopy(self.Q)
-
-        super(DQN, self).__init__(**kwargs)
-    
-        if self.policy == None:
-            self.policy = MaxQ(self.Q)
-        assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
-        self.Q = self.policy.Qfunction # make sure that the Q function is updated
 
         self.memory = deque(maxlen=memory_size) #deque handles length
 
@@ -305,15 +318,23 @@ class DQN(Agent):
         self.action_repeat = action_repeat
         self.history_len = history_len
         self.image = image
+        self.double = double
+        self.bounds = bounds
+        self.update_cycles = update_cycles
 
         self.frame_count = 0
         self.action_count = 0
         self.loss = 0
+        self.t = 0
 
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
         self.r = 0
         self.done = False
+        if self.bounds:
+            self.Umin = np.zeros((1,A.n))
+            self.Lmax = np.zeros((1,A.n))
+            
 
         if self.image:
             if K.image_dim_ordering() == 'th': 
@@ -322,12 +343,17 @@ class DQN(Agent):
                 self.state = np.concatenate([self._preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=-1)
         else:
             self.state = self._preprocess(self.S.sample())
-        self.Q(self.state)
-        self.targetQ(self.state)
+        if self.bounds:
+            self.Q([self.state,self.Umin,self.Lmax])
+            self.targetQ([self.state,self.Umin,self.Lmax])
+        else:
+            self.Q(self.state)
+            self.targetQ(self.state)
         self.state = self.prev_state
 
     def observe(self, s_next, r, done, n):
         self.frame_count += 1
+        self.t += 1
 
         # update the target network
         if n % self.target_update_freq == 0:
@@ -338,15 +364,47 @@ class DQN(Agent):
 
         # update the policy
         start = timeit.default_timer()
-        if self.frame_count % (self.action_repeat*self.update_freq) == 0 and self.frame_count > self.random_start:        
-            states, actions, s_nexts, rs, dones = self._get_batch()
+        if self.frame_count % (self.action_repeat*self.update_freq) == 0 and self.frame_count > self.random_start: 
+            if self.bounds:
+                states, actions, s_nexts, rs, dones, Umin, Lmax = self._get_batch()
 
-            targets = np.zeros((self.batch_size, self.A.n))
-            targets = self.Q(states)
+                #print 'Frame', self.frame_count,
+                #print 'Umin', Umin[0][actions[0]],
+                #print 'Lmax', Lmax[0][actions[0]]
 
-            Qs = self.targetQ(s_nexts)
-            targets[np.arange(self.batch_size), actions] = np.where(dones, rs, rs + self.gamma*Qs.max(1))
-            self.loss = self.policy.update(targets, states)         
+                targets = np.zeros((self.batch_size, self.A.n))
+                targets = self.Q([states,Umin,Lmax])
+
+                if self.double:
+                    _a = self.Q([s_nexts,Umin,Lmax]).argmax(1)
+                    update = rs + self.gamma*self.targetQ([s_nexts,Umin,Lmax])[np.arange(self.batch_size),_a]
+                else:
+                    Qs = self.targetQ([s_nexts,Umin,Lmax])
+                    update = rs + self.gamma*Qs.max(1)
+                targets[np.arange(self.batch_size), actions] = np.where(dones, rs, update)
+                self.loss = self.policy.update(targets, [states,Umin,Lmax], n=self.update_cycles)      
+            else:       
+                states, actions, s_nexts, rs, dones = self._get_batch()
+
+                targets = np.zeros((self.batch_size, self.A.n))
+                targets = self.Q(states)
+
+                if self.double:
+                    _a = self.Q(s_nexts).argmax(1)
+                    update = rs + self.gamma*self.targetQ(s_nexts)[np.arange(self.batch_size),_a]
+                else:
+                    Qs = self.targetQ(s_nexts)
+                    update = rs + self.gamma*Qs.max(1)
+                targets[np.arange(self.batch_size), actions] = np.where(dones, rs, update)
+                self.loss = self.policy.update(targets, states, n=self.update_cycles)         
+
+        if self.bounds and done:
+            nextR = 0
+            for idx in range(self.t-1):
+                R = self.memory[-idx-1][2] + self.gamma*nextR
+                self.memory[-idx-1].append(R)
+                nextR = R
+            self.t = 0
 
         self.state = next_state
         self.r = r
@@ -363,9 +421,14 @@ class DQN(Agent):
             else:
                 idx = len(self.memory)-self.history_len-1
                 state = self._get_history(idx)
-                self.action = self.policy(state, **kwargs)
+                if self.bounds:
+                    self.Umin = np.zeros((1,self.A.n))
+                    self.Lmax = np.zeros((1,self.A.n))
+                    self.action = self.policy([state,self.Umin,self.Lmax], **kwargs)
+                else:
+                    self.action = self.policy(state, **kwargs)
 
-        transition = (self.state, self.action, self.r, self.done)
+        transition = [self.state, self.action, self.r, self.done]
         self.memory.append(transition)
         return self.action
 
@@ -416,22 +479,28 @@ class DQN(Agent):
         # here the next state that the agent gets is from the next episode (s0, s1, s2, s3)
         # in this case we ignore the next state and just use the reward in the update
         # we need to include a end of episode flag, (s, a, r, d), in the memory
-
-        indices = np.random.choice(len(self.memory) - self.history_len -1, self.batch_size, replace=False)
+        if self.bounds:
+            arange = np.arange(4, len(self.memory) - self.history_len - 2 - self.t)
+        else:
+            arange = np.arange(len(self.memory) - self.history_len -1)
+        indices = np.random.choice(arange, self.batch_size, replace=False)
         states = []
         actions = []
         s_nexts = []
         rs = []
         dones = []
+        if self.bounds:
+            Us = []
+            Ls = []
         for i in xrange(indices.shape[0]):
             idx = indices[i]
             # if done get a new index
             m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
-            done = reduce(lambda x,y: x or y, [memory[-1] for memory in m_slice])
+            done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
             while done:
                 idx = np.random.randint(len(self.memory) - self.history_len -1)
                 m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
-                done = reduce(lambda x,y: x or y, [memory[-1] for memory in m_slice])
+                done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
             
             state = self._get_history(idx)
             action = self.memory[idx + self.history_len][1]
@@ -444,13 +513,22 @@ class DQN(Agent):
             s_nexts.append(next_state)
             rs.append(reward)
             dones.append(done)
+            if self.bounds:
+                umin, lmax = self._get_bounds(idx, state, action, k=4)
+                Us.append(umin)
+                Ls.append(lmax)
      
         states = np.concatenate(states, axis=0)
         actions = np.array(actions)
         s_nexts = np.concatenate(s_nexts, axis=0)
         rs = np.array(rs)
         dones = np.array(dones)
-        return states, actions, s_nexts, rs, dones
+        if self.bounds:
+            Umin = np.array(Us)
+            Lmax = np.array(Ls)
+            return states, actions, s_nexts, rs, dones, Umin, Lmax
+        else:
+            return states, actions, s_nexts, rs, dones
 
     def _get_history(self, idx):
         m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
@@ -459,7 +537,36 @@ class DQN(Agent):
             state = np.concatenate(state, axis=1)
         else:
             state = np.concatenate(state, axis=-1)
-        return state     
+        return state
+
+    def _get_future(self, idx, k=4):
+        m_slice = [self.memory[i] for i in xrange(idx, idx + k + 1)]
+        R = np.array([t[4] for t in m_slice])
+        s = np.concatenate([self._get_history(i) for i in xrange(idx + 1, idx + k + 1)], axis=0)
+        return R, s
+
+    def _get_past(self, idx, k=4):
+        m_slice = [self.memory[i] for i in xrange(idx - k, idx + 1)]
+        R = np.array([t[4] for t in m_slice])
+        a = np.array([t[1] for t in m_slice])[:-1]
+        s = np.concatenate([self._get_history(i) for i in xrange(idx - k, idx)], axis=0)
+        return R, s, a
+
+    def _get_bounds(self, idx, state, action, k=4):
+        self.Umin = np.zeros((k,self.A.n))
+        self.Lmax = np.zeros((k,self.A.n))
+        Q = self.Q([state, np.zeros((1,self.A.n)), np.zeros((1,self.A.n))])
+        Umin = np.array(Q[0]) #to vector
+        Lmax = np.array(Q[0]) #to vector
+        R, s = self._get_future(idx, k)
+        L = R[0] + self.gamma**np.arange(1,k+1) * (self.targetQ([s, self.Umin, self.Lmax]).max(-1) - R[1:])
+        R, s, a = self._get_past(idx, k)
+        U = self.gamma**(-np.arange(1,k+1)[::-1]) * (self.targetQ([s, self.Umin, self.Lmax])[np.arange(k),a] - R[:-1]) + R[-1]
+        Umin[action] = U.min()
+        Lmax[action] = L.max()
+        # We need U and L to be equal to y_pred except for at action a:
+        #   e.g. U = [y_pred[0], y_pred[1], 23, y_pred[3]]
+        return Umin, Lmax
 
     def save(self, s_dir='.'):
         self.targetQ.save(s_dir, name='targetQmodel')

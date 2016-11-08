@@ -127,7 +127,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
         l_dir = s_dir
 
     n_episode = n_episode
-    tMax = 10000
+    tMax = 200
     log_freq = 10
 
     def huber_loss(y_true, y_pred):
@@ -136,14 +136,20 @@ def test_session(env_name, n_episode, interactive, l_dir):
 
     # Define your agent
     #agent = CrossEntropy(S,A)
-    memory_size =  1000000
-    random_start = 50000
-    exploration_frames = 1000000
-    loss = huber_loss
-    opt = RMSprop(lr=0.00025)
-    name = 'DQN-new'
-    atari = True
-    image = True       
+    memory_size = 5000          #1000000
+    random_start = 1000         #50000
+    exploration_frames = 0      #1000000
+    epsilon = 0.0               #0.1
+    target_update_freq = 1000   #10000
+    update_freq = 1             #4
+    action_repeat = 1           #4
+    history_len = 1             #4
+    batch_size = 128            #32
+    loss = huber_loss           #huber_loss
+    opt =  'adam'               #RMSprop(lr=0.00025)
+    name = 'DDQN-bounded4'
+    atari = False
+    image = False      
         
     if atari:
         if K.image_dim_ordering() == 'th':
@@ -163,14 +169,15 @@ def test_session(env_name, n_episode, interactive, l_dir):
         if type(S) == gym.spaces.Discrete:
             model.add(Dense(100, input_dim=S.n, activation='relu', name='l1'))
         else:
-            model.add(Dense(100, input_shape=S.shape, activation='relu', name='l1'))
+            model.add(Dense(20, input_shape=S.shape, activation='relu', name='l1'))
         model.add(Dense(20, activation='relu', name='l2'))
         model.add(Dense(A.n, activation='linear', name='l3'))
 
-    Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt)
-    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=0.1, final=exploration_frames))
-    agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=32,
-                target_update_freq=10000, update_freq=4, action_repeat=4, history_len=4, image=image, name=name)
+    Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt, bounds=True, batch_size=batch_size)
+    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
+    agent = DQN(S, A, policy=policy, model=model, memory_size=memory_size, random_start=random_start, batch_size=batch_size,
+                target_update_freq=target_update_freq, update_freq=update_freq, action_repeat=action_repeat, 
+                history_len=history_len, image=image, name=name, double=True, bounds=True, update_cycles=None)
 
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=100000, memory_fit=100, lr=1.0, weights='distance')
     #agent = QLearning(S, A, Q=knn, name='KNN-1', random_start=random_start)

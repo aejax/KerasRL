@@ -1,7 +1,8 @@
 import numpy as np
 import gym
+import keras.backend as K
 from keras.models import Model, Sequential, load_model
-from keras.layers import Convolution2D, Dense, Flatten
+from keras.layers import Convolution2D, Dense, Flatten, Input, merge
 from keras.preprocessing import image
 from sklearn.neighbors import KNeighborsRegressor
 import types
@@ -41,7 +42,7 @@ class ValueFunction(object):
         self.lr(n)*update
 
 class KerasQ(ValueFunction):
-    def __init__(self, S=None, A=None, model=None, loss='mse', optimizer='adam',**kwargs):
+    def __init__(self, S=None, A=None, model=None, loss='mse', optimizer='adam', bounds=False, batch_size=32, **kwargs):
         self.S = S
         self.A = A
 
@@ -56,6 +57,21 @@ class KerasQ(ValueFunction):
         else:
             self.model = model
 
+        if bounds:
+            out_shape = self.model.outputs[0]._keras_shape
+            Umin = Input(shape=(out_shape[-1],), name='Umin')
+            Lmax = Input(shape=(out_shape[-1],), name='Lmax')
+            output = merge(self.model.outputs+[Umin,Lmax], mode=lambda l: l[0] + 1e-6*l[1] + 1e-6*l[2], output_shape=(out_shape[-1],))
+            self.model = Model(input=self.model.inputs+[Umin,Lmax], output=output)
+
+            def bounded_loss(y_true, y_pred):
+                penalty = 4
+                mse = K.square(y_pred - y_true)
+                lb = penalty*K.relu(K.square(Lmax - y_pred))
+                ub = penalty*K.relu(K.square(y_pred - Umin))
+                return K.sum(mse + lb + ub, axis=-1)
+            loss = bounded_loss
+            
         self.model.compile(loss=loss, optimizer=optimizer)
 
         super(KerasQ, self).__init__(**kwargs)
@@ -64,7 +80,12 @@ class KerasQ(ValueFunction):
         return self.model.predict_on_batch(state)
 
     def update(self, update, state, n=None):
-        return self.model.train_on_batch(state, update)
+        if n:
+            for _ in xrange(n):
+                loss = self.model.train_on_batch(state, update)
+            return loss 
+        else:
+            return self.model.train_on_batch(state, update)
 
     def save(self, s_dir, name='Qmodel', **kwargs):
         self.model.save('{}/{}.h5'.format(s_dir,name))
