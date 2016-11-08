@@ -179,7 +179,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
     model2.set_weights(model.get_weights())
 
     Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
-    targetQ = KerasQ(S, A, model=model2, loss=loss, optimizer=opt, bounds=boundse, batch_size=batch_size)
+    targetQ = KerasQ(S, A, model=model2, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
     policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
     agent = DQN(S, A, policy=policy, Qfunction=Q, targetQfunction=targetQ, memory_size=memory_size, random_start=random_start, batch_size=batch_size,
                 target_update_freq=target_update_freq, update_freq=update_freq, action_repeat=action_repeat, 
