@@ -268,7 +268,7 @@ class DoubleQLearning(Agent):
 class DQN(Agent):
     def __init__(self, S, A, gamma=0.99, Qfunction=None, targetQfunction=None, model=None, loss='mse', optimizer='adam', 
                  memory_size=10000, target_update_freq=1000, batch_size= 32, update_freq=4, 
-                 action_repeat=4, history_len=4, image=False, double=True, bounds=False, update_cycles=None, **kwargs):
+                 history_len=4, image=False, double=True, bounds=False, update_cycles=None, **kwargs):
 
         super(DQN, self).__init__(**kwargs)
         self.S = S
@@ -309,7 +309,6 @@ class DQN(Agent):
         self.target_update_freq = target_update_freq
         self.batch_size = batch_size
         self.update_freq = update_freq
-        self.action_repeat = action_repeat
         self.history_len = history_len
         self.image = image
         self.double = double
@@ -317,7 +316,6 @@ class DQN(Agent):
         self.update_cycles = update_cycles
 
         self.frame_count = 0
-        self.action_count = 0
         self.loss = 0
         self.t = 0
 
@@ -358,7 +356,7 @@ class DQN(Agent):
 
         # update the policy
         start = timeit.default_timer()
-        if self.frame_count % (self.action_repeat*self.update_freq) == 0 and self.frame_count > self.random_start: 
+        if self.frame_count % self.update_freq == 0 and self.frame_count > self.random_start: 
             if self.bounds:
                 states, actions, s_nexts, rs, dones, Umin, Lmax = self._get_batch()
 
@@ -406,21 +404,18 @@ class DQN(Agent):
         return self.loss
 
     def act(self, **kwargs):
-        if self.frame_count % self.action_repeat == 0:
-            # count how many actions you have selected
-            self.action_count += 1
-            # for less than random_start apply a random policy
-            if self.frame_count < self.random_start:
-                self.action = self.A.sample()
+        # for less than random_start apply a random policy
+        if self.frame_count < self.random_start:
+            self.action = self.A.sample()
+        else:
+            idx = len(self.memory)-self.history_len-1
+            state = self._get_history(idx)
+            if self.bounds:
+                self.Umin = np.zeros((1,self.A.n))
+                self.Lmax = np.zeros((1,self.A.n))
+                self.action = self.policy([state,self.Umin,self.Lmax], **kwargs)
             else:
-                idx = len(self.memory)-self.history_len-1
-                state = self._get_history(idx)
-                if self.bounds:
-                    self.Umin = np.zeros((1,self.A.n))
-                    self.Lmax = np.zeros((1,self.A.n))
-                    self.action = self.policy([state,self.Umin,self.Lmax], **kwargs)
-                else:
-                    self.action = self.policy(state, **kwargs)
+                self.action = self.policy(state, **kwargs)
 
         transition = [self.state, self.action, self.r, self.done]
         self.memory.append(transition)
@@ -567,8 +562,8 @@ class DQN(Agent):
         self.policy.save(s_dir)
         pkl.dump(self.memory, open('{}/memory.pkl'.format(s_dir),'w'))
 
-        session = {'frame_count':self.frame_count, 'action_count':self.action_count,
-                   'loss':self.loss, 'action':self.action, 'prev_state':self.prev_state, 'state':self.state}
+        session = {'frame_count':self.frame_count, 'loss':self.loss, 'action':self.action, 
+                   'prev_state':self.prev_state, 'state':self.state}
         pkl.dump(session, open('{}/session.pkl'.format(s_dir),'w'))
 
     def load(self,s_dir='.', **kwargs):
@@ -585,6 +580,8 @@ class DQN(Agent):
 
 class CrossEntropy(Agent):
     def __init__(self, S, A, n_sample=100, top_p=0.2, init_mean=None, init_std=None, **kwargs):
+        super(CrossEntropy, self).__init__(**kwargs)
+
         self.S = S
         self.A = A
 
@@ -603,8 +600,6 @@ class CrossEntropy(Agent):
             
         if init_std == None:
             self.std = np.random.uniform(low=0,high=1,size=self.param_dim) 
-
-        super(CrossEntropy, self).__init__(self.policy, **kwargs)
 
         self.i = 0 #sample counter varies between 0 and n_sample-1
         self.R = np.zeros(self.n_sample) # the collection of rewards
@@ -651,4 +646,74 @@ class CrossEntropy(Agent):
             return s
         else:
             return state
-            
+
+"""
+class EpisodicControl(Agent):
+    def __init__(self, S, A, embedding_function=None, Qfunction=None):
+        super(EpisodicControl, self).__init__(**kwargs)
+
+        self.S = S
+        self.A = A
+
+        if embedding_function == None:
+            s_dim = get_space_dim(self.S)
+            if s_dim > 10:
+                RM = np.random.random((10, s_dim))
+                self.phi = lambda o: np.dot(RM, o.flatten())
+            else:
+                self.phi = lambda o: o
+        else:
+            self.phi = embedding_function
+   
+        if self.policy == None:
+            if Qfunction == None:
+                Qfunction = KNNQ(S, A)
+            self.policy == MaxQ(Qfunction)
+        assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
+        self.Q = self.policy.Qfunction
+
+        self.rewards = []
+        self.states = []
+        self.actions = []
+
+        self.state  = self.phi(self._preprocess(self.S.sample()))
+        self.action = self.A.sample()
+
+    def observe(self, s_next, r, done):
+        if not done:
+            self.state = self.phi(self._preprocess(s_next))
+            self.states.append(self.state)
+            self.rewards.append(r)
+            return 0
+        else:
+            R_tp1 = 0
+            for r, s, a in zip(reversed(self.rewards), reversed(self.states), reversed(self.actions)):
+                R = r + self.gamma*R_tp1
+                Q_ec(s, a) = R
+                target = np.zeros(self.A.n)
+                target[a] = R
+
+    def _preprocess(self, state):
+        if self.image:
+            # I need to process the state with the previous state
+            # I take the max pixel value of the two frames
+            state[0] = np.maximum(state[0], self.prev_state[0])
+            state[1] = np.maximum(state[1], self.prev_state[1])
+            state[2] = np.maximum(state[2], self.prev_state[2])
+            # convert rgb image to yuv image
+            yCbCr = Image.fromarray(state, 'YCbCr')
+            # extract the y channel
+            y, Cb, Cr = yCbCr.split()
+            # rescale to 84x84
+            y_res = y.resize((84,84))
+            output = image.img_to_array(y_res)
+            output = np.array(output, dtype=np.uint8) #keep memory small
+        elif type(self.S) == gym.spaces.Discrete:
+            # one-hot encoding
+            output = np.zeros(self.S.n)
+            output[state] = 1
+        else:
+            output = state
+
+        return np.expand_dims(output, axis=0) #add axis for batch dimension
+"""

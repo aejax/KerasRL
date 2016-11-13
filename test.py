@@ -11,6 +11,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+import simple_dqn
+import atari_dqn
+
 def yntotf(s):
     if s.lower() == 'y':
         return True
@@ -20,7 +23,7 @@ def yntotf(s):
         print '\'{}\' cannot be converted to True or False.'.format(s)
         return None
 
-def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, random_start):
+def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
     returns = []
     losses = []
     if monitor:
@@ -44,7 +47,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
                 if render and (episode+1)%log_freq == 0:
                     env.render(mode='human')
 
-                action = agent.act(n=count_steps-random_start)
+                action = agent.act(n=count_steps-agent.random_start)
                 observation, reward, done, info = env.step(action)
 
                 # End the episode at tMax
@@ -95,7 +98,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, ran
         plt.savefig('{}/{}.png'.format(s_dir, agent.name), format='png')
         plt.close('all')
 
-def test_session(env_name, n_episode, interactive, l_dir):
+def test_session(env_name, agent_name, n_episode, interactive, l_dir):
     env = gym.make(env_name)
     S = env.observation_space
     A = env.action_space
@@ -127,63 +130,15 @@ def test_session(env_name, n_episode, interactive, l_dir):
         l_dir = s_dir
 
     n_episode = n_episode
-    tMax = 10000
-    log_freq = 10
+    tMax = env.spec.timestep_limit
+    log_freq = 1
 
-    def huber_loss(y_true, y_pred):
-        err = y_pred - y_true
-        return K.mean(K.sqrt(1 + K.square(err)) - 1, axis=-1)
-
-    # Define your agent
-    #agent = CrossEntropy(S,A)
-    memory_size = 1000000       #1000000
-    random_start = 50000        #50000
-    exploration_frames = 1000000#1000000
-    epsilon = 0.1               #0.1
-    target_update_freq = 10000  #10000
-    update_freq = 4             #4
-    action_repeat = 4           #4
-    history_len = 4             #4
-    batch_size = 32             #32
-    loss = huber_loss           #huber_loss
-    opt =  RMSprop(lr=0.00025)  #RMSprop(lr=0.00025)
-    bounds = True
-    name = 'DQN-bounded'
-    atari = True
-    image = True      
-        
-    if atari:
-        if K.image_dim_ordering() == 'th':
-            state_shape = (4,84,84)
-        else:
-            state_shape = (84,84,4)
-        # default DQN for atari
-        model = Sequential()
-        model.add(Convolution2D(32, 8, 8, subsample=(4,4), input_shape=state_shape, activation='relu'))
-        model.add(Convolution2D(64, 4, 4, subsample=(2,2), activation='relu'))
-        model.add(Convolution2D(64, 3, 3, subsample=(1,1), activation='relu'))
-        model.add(Flatten())
-        model.add(Dense(512, activation='relu'))
-        model.add(Dense(A.n))
-    else:
-        model = Sequential()
-        if type(S) == gym.spaces.Discrete:
-            model.add(Dense(100, input_dim=S.n, activation='relu', name='l1'))
-        else:
-            model.add(Dense(20, input_shape=S.shape, activation='relu', name='l1'))
-        model.add(Dense(20, activation='relu', name='l2'))
-        model.add(Dense(A.n, activation='linear', name='l3'))
-
-    config = model.get_config()
-    model2 = Sequential.from_config(config)
-    model2.set_weights(model.get_weights())
-
-    Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
-    targetQ = KerasQ(S, A, model=model2, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
-    policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
-    agent = DQN(S, A, policy=policy, Qfunction=Q, targetQfunction=targetQ, memory_size=memory_size, random_start=random_start, batch_size=batch_size,
-                target_update_freq=target_update_freq, update_freq=update_freq, action_repeat=action_repeat, 
-                history_len=history_len, image=image, name=name, double=False, bounds=bounds, update_cycles=None)
+    if agent_name == 'simple_dqn':
+        agent = simple_dqn.get_agent(env, name='sDDQNb')
+    elif agent_name == 'atari_dqn':
+        agent = atari_dqn.get_agent(env, name='DQN')
+    elif agent_name == 'ce':
+        agent = ce.get_agent(env, name='ce')
 
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=100000, memory_fit=100, lr=1.0, weights='distance')
     #agent = QLearning(S, A, Q=knn, name='KNN-1', random_start=random_start)
@@ -200,7 +155,7 @@ def test_session(env_name, n_episode, interactive, l_dir):
     # Perform test
     print 'Beginning training for {} episodes.'.format(n_episode)
     begin = timeit.default_timer()
-    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, random_start)
+    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir)
     end = timeit.default_timer()
     dt = end - begin
     print 'Run time: {:}min {:.3}s'.format(dt // 60, dt % 60)
@@ -217,9 +172,10 @@ def test_session(env_name, n_episode, interactive, l_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RL testing script.')
     parser.add_argument('-e', '--environment', type=str, default='FrozenLake-v0')
+    parser.add_argument('-a', '--agent', type=str, default='simple_dqn')
     parser.add_argument('-n', '--n_episode', type=int, default=100)
     parser.add_argument('-l', '--load_dir', type=str, default='')
     parser.add_argument('-i', '--interactive', action='store_true')
 
     args = parser.parse_args()
-    test_session(args.environment, args.n_episode, args.interactive, args.load_dir)
+    test_session(args.environment, args.agent, args.n_episode, args.interactive, args.load_dir)
