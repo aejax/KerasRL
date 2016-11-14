@@ -73,6 +73,7 @@ class KerasQ(ValueFunction):
             loss = bounded_loss
             
         self.model.compile(loss=loss, optimizer=optimizer)
+        self.loss = loss
 
         super(KerasQ, self).__init__(**kwargs)
 

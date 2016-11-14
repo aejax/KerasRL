@@ -557,7 +557,13 @@ class DQN(Agent):
         #   e.g. U = [y_pred[0], y_pred[1], 23, y_pred[3]]
         return Umin, Lmax
 
-    def save(self, s_dir='.'):
+    def save(self, s_dir):
+        import os
+        import os.path
+        s_dir = s_dir + '/' + self.name
+        file_path = './' + s_dir
+        if not os.path.exists(file_path):
+            os.mkdir(s_dir)
         self.targetQ.save(s_dir, name='targetQmodel')
         self.policy.save(s_dir)
         pkl.dump(self.memory, open('{}/memory.pkl'.format(s_dir),'w'))
@@ -566,7 +572,8 @@ class DQN(Agent):
                    'prev_state':self.prev_state, 'state':self.state}
         pkl.dump(session, open('{}/session.pkl'.format(s_dir),'w'))
 
-    def load(self,s_dir='.', **kwargs):
+    def load(self, s_dir, **kwargs):
+        s_dir = s_dir + '/' + self.name
         self.targetQ.load(s_dir, name='targetQmodel', **kwargs)
         self.policy.load(s_dir, **kwargs)
         self.Q = self.policy.Qfunction # make sure that the Q function is updated
@@ -576,7 +583,6 @@ class DQN(Agent):
         for key, value in session.iteritems():
             if hasattr(self, key):
                 self.__dict__[key] = value
-        
 
 class CrossEntropy(Agent):
     def __init__(self, S, A, n_sample=100, top_p=0.2, init_mean=None, init_std=None, **kwargs):

@@ -64,6 +64,14 @@ def get_agent(env, name=None):
 
     return agent
 
+def load(l_dir, env, name=None):
+    agent = get_agent(env, name=name)
+
+    loss = huber_loss
+    opt =  RMSprop(lr=0.00025)
+    agent.load(l_dir, loss=loss, optimizer=opt, custom_objects={'bounded_loss':agent.Q.loss})
+    return agent
+
 if __name__ == '__main__':
     env = gym.make('CartPole-v0')
     agent = get_agent(env)

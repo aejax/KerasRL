@@ -27,7 +27,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
     returns = []
     losses = []
     if monitor:
-        env.monitor.start('tmp/{}'.format(agent.name), force=True)
+        env.monitor.start('{}/{}'.format(s_dir, agent.name), force=True)
 
     if hasattr(agent, 'frame_count'):
         count_steps = agent.frame_count
@@ -98,59 +98,69 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
         plt.savefig('{}/{}.png'.format(s_dir, agent.name), format='png')
         plt.close('all')
 
-def test_session(env_name, agent_name, n_episode, interactive, l_dir):
+def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, s_dir):
     env = gym.make(env_name)
     S = env.observation_space
     A = env.action_space
+
+    #set defaults
+    if s_dir == '':
+        s_dir = env_name
+    if l_dir == '':
+        l_dir = s_dir
+
+    render = False
+    monitor = False
+    plot = False
+    save = False
+    load = False
 
     if interactive:
         render = yntotf(raw_input('Render? [y/n] '))
         monitor = yntotf(raw_input('Monitor? [y/n] '))
         plot = yntotf(raw_input('Plot? [y/n] '))
         save = yntotf(raw_input('Save? [y/n] '))
+        if save:
+            tmp = raw_input('Save directory? (default is {}): '.format(s_dir))
+            s_dir = tmp if tmp != '' else s_dir
+            print s_dir
         load = yntotf(raw_input('Load? [y/n] '))
-    else:
-        render = False
-        monitor = False
-        plot = True
-        save = False
-        load = False
+        if load:
+            tmp = raw_input('Load directory? (default is {}): '.format(l_dir))
+            l_dir = tmp if tmp != '' else l_dir
+            print l_dir
 
     # define the save and load directory
-    s_dir = env_name
     import os
     import os.path
     file_path = './' + s_dir
     if not os.path.exists(file_path):
         os.mkdir(s_dir)
-    if l_dir != '':
-        load = True
-        l_dir = ldir
-    elif l_dir == '' and load:
-        l_dir = s_dir
+    file_path = './' + l_dir
+    if not os.path.exists(file_path):
+        os.mkdir(l_dir)
 
+    #define run length
     n_episode = n_episode
     tMax = env.spec.timestep_limit
-    log_freq = 1
+    log_freq = log_freq
 
+    #define agent
     if agent_name == 'simple_dqn':
-        agent = simple_dqn.get_agent(env, name='sDDQNb')
+        if load:
+            agent = simple_dqn.load(l_dir, env, name='sDDQNb')
+        else:
+            agent = simple_dqn.get_agent(env, name='sDDQNb')
     elif agent_name == 'atari_dqn':
-        agent = atari_dqn.get_agent(env, name='DQN')
-    elif agent_name == 'ce':
-        agent = ce.get_agent(env, name='ce')
+        if load:
+            agent = atari_dqn.load(l_dir, env, name='DQN')
+        else:
+            agent = atari_dqn.get_agent(env, name='DQN')
+    else:
+        raise ValueError, '{} is not a valid agent name.'.format(agent_name)
 
     #knn = KNNQ(S, A, n_neighbors=5, memory_size=100000, memory_fit=100, lr=1.0, weights='distance')
     #agent = QLearning(S, A, Q=knn, name='KNN-1', random_start=random_start)
-
-    if load:
-        print 'Loading agent from {}'.format(l_dir)
-        begin = timeit.default_timer()
-        agent.load(l_dir, loss=loss, optimizer=opt, custom_objects={'huber_loss':huber_loss})
-
-        end = timeit.default_timer()
-        dt = end - begin
-        print 'Load time: {:}min {:.3}s'.format(dt // 60, dt % 60)
 
     # Perform test
     print 'Beginning training for {} episodes.'.format(n_episode)
@@ -174,8 +184,10 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--environment', type=str, default='FrozenLake-v0')
     parser.add_argument('-a', '--agent', type=str, default='simple_dqn')
     parser.add_argument('-n', '--n_episode', type=int, default=100)
+    parser.add_argument('--log', type=int, default=10)
     parser.add_argument('-l', '--load_dir', type=str, default='')
+    parser.add_argument('-s', '--save_dir', type=str, default='')
     parser.add_argument('-i', '--interactive', action='store_true')
 
     args = parser.parse_args()
-    test_session(args.environment, args.agent, args.n_episode, args.interactive, args.load_dir)
+    test_session(args.environment, args.agent, args.n_episode, args.log, args.interactive, args.load_dir, args.save_dir)

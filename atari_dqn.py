@@ -36,7 +36,7 @@ def get_agent(env, name=None):
     bounds = False
     double = False
     update_cycles = None
-    name = 'DQN' if name == None else name
+    name = 'atariDQN' if name == None else name
     image = True
  
     # define the model
@@ -57,13 +57,22 @@ def get_agent(env, name=None):
     model2.set_weights(model.get_weights())
 
     Q = KerasQ(S, A, model=model, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
-    targetQ = KerasQ(S, A, gamma=gamma, model=model2, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
+    targetQ = KerasQ(S, A, model=model2, loss=loss, optimizer=opt, bounds=bounds, batch_size=batch_size)
     policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
-    agent = DQN(S, A, policy=policy, Qfunction=Q, targetQfunction=targetQ, memory_size=memory_size, random_start=random_start, 
+    agent = DQN(S, A, gamma=gamma, policy=policy, Qfunction=Q, targetQfunction=targetQ, memory_size=memory_size, random_start=random_start, 
                 batch_size=batch_size, target_update_freq=target_update_freq, update_freq=update_freq, history_len=history_len, 
                 image=image, name=name, double=double, bounds=bounds, update_cycles=update_cycles)
 
     return agent
+
+def load(l_dir, env, name=None):
+    agent = get_agent(env, name=name)
+
+    loss = huber_loss
+    opt =  RMSprop(lr=0.00025)
+    agent.load(l_dir, loss=loss, optimizer=opt, custom_objects={'huber_loss':huber_loss})
+    return agent
+    
 
 if __name__ == '__main__':
     import gym
