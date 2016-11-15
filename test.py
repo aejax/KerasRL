@@ -40,7 +40,8 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
             l_sum = agent.observe(observation, 0, done, count_steps)
             count_steps += 1
             r_sum = 0
-            timer = 0    
+            timer = 0
+            s = timeit.default_timer() 
             while not done:
                 count_steps += 1
 
@@ -48,6 +49,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
                     env.render(mode='human')
 
                 action = agent.act(n=count_steps-agent.random_start)
+
                 observation, reward, done, info = env.step(action)
 
                 # End the episode at tMax
@@ -62,6 +64,11 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
 
             if (episode+1)%log_freq == 0:
                 print 'Episode {} finished with return of {}.'.format(episode+1,r_sum)
+                e = timeit.default_timer()
+                print 'Training step time: ', (e - s) / timer
+                print 'Training steps: ', timer
+                if hasattr(agent, 'times'):
+                    agent.times()
             returns.append(r_sum)
             losses.append(l_sum / timer)
 

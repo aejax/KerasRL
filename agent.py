@@ -319,6 +319,15 @@ class DQN(Agent):
         self.loss = 0
         self.t = 0
 
+        self.Qforward_time = 0
+        self.policy_update_time = 0
+        self.observation_time = 0
+        self.act_time = 0
+        self.get_batch_time = 0
+        self.get_bounds_time = 0
+        self.get_future_time = 0
+        self.get_past_time = 0
+
         self.action = self.A.sample()
         self.prev_state = self.S.sample()
         self.r = 0
@@ -344,6 +353,7 @@ class DQN(Agent):
         self.state = self.prev_state
 
     def observe(self, s_next, r, done, n):
+        start0 = timeit.default_timer()
         self.frame_count += 1
         self.t += 1
 
@@ -360,12 +370,11 @@ class DQN(Agent):
             if self.bounds:
                 states, actions, s_nexts, rs, dones, Umin, Lmax = self._get_batch()
 
-                #print 'Frame', self.frame_count,
-                #print 'Umin', Umin[0][actions[0]],
-                #print 'Lmax', Lmax[0][actions[0]]
-
                 targets = np.zeros((self.batch_size, self.A.n))
+                start = timeit.default_timer()
                 targets = self.Q([states,Umin,Lmax])
+                end = timeit.default_timer()
+                self.Qforward_time += end - start
 
                 if self.double:
                     _a = self.Q([s_nexts,Umin,Lmax]).argmax(1)
@@ -374,21 +383,31 @@ class DQN(Agent):
                     Qs = self.targetQ([s_nexts,Umin,Lmax])
                     update = rs + self.gamma*Qs.max(1)
                 targets[np.arange(self.batch_size), actions] = np.where(dones, rs, update)
-                self.loss = self.policy.update(targets, [states,Umin,Lmax], n=self.update_cycles)      
-            else:       
+                start = timeit.default_timer()
+                self.loss = self.policy.update(targets, [states,Umin,Lmax], n=self.update_cycles)
+                end = timeit.default_timer()
+                self.policy_update_time += end - start   
+            else:      
                 states, actions, s_nexts, rs, dones = self._get_batch()
-
+ 
                 targets = np.zeros((self.batch_size, self.A.n))
+                start = timeit.default_timer()
                 targets = self.Q(states)
+                end = timeit.default_timer()
+                self.Qforward_time += end - start
 
                 if self.double:
                     _a = self.Q(s_nexts).argmax(1)
                     update = rs + self.gamma*self.targetQ(s_nexts)[np.arange(self.batch_size),_a]
                 else:
+                    start = timeit.default_timer() 
                     Qs = self.targetQ(s_nexts)
                     update = rs + self.gamma*Qs.max(1)
                 targets[np.arange(self.batch_size), actions] = np.where(dones, rs, update)
-                self.loss = self.policy.update(targets, states, n=self.update_cycles)         
+                start = timeit.default_timer()
+                self.loss = self.policy.update(targets, states, n=self.update_cycles) 
+                end = timeit.default_timer()
+                self.policy_update_time += end - start        
 
         if self.bounds and done:
             nextR = 0
@@ -401,9 +420,12 @@ class DQN(Agent):
         self.state = next_state
         self.r = r
         self.done = done
+        end = timeit.default_timer()
+        self.observation_time += end - start0
         return self.loss
 
     def act(self, **kwargs):
+        start = timeit.default_timer()
         # for less than random_start apply a random policy
         if self.frame_count < self.random_start:
             self.action = self.A.sample()
@@ -419,6 +441,8 @@ class DQN(Agent):
 
         transition = [self.state, self.action, self.r, self.done]
         self.memory.append(transition)
+        end = timeit.default_timer()
+        self.act_time += end - start
         return self.action
 
     def _get_memory_size(self):
@@ -431,9 +455,9 @@ class DQN(Agent):
         if self.image:
             # I need to process the state with the previous state
             # I take the max pixel value of the two frames
-            state[0] = np.maximum(state[0], self.prev_state[0])
-            state[1] = np.maximum(state[1], self.prev_state[1])
-            state[2] = np.maximum(state[2], self.prev_state[2])
+            #state[0] = np.maximum(state[0], self.prev_state[0])
+            #state[1] = np.maximum(state[1], self.prev_state[1])
+            #state[2] = np.maximum(state[2], self.prev_state[2])
             # convert rgb image to yuv image
             yCbCr = Image.fromarray(state, 'YCbCr')
             # extract the y channel
@@ -468,6 +492,7 @@ class DQN(Agent):
         # here the next state that the agent gets is from the next episode (s0, s1, s2, s3)
         # in this case we ignore the next state and just use the reward in the update
         # we need to include a end of episode flag, (s, a, r, d), in the memory
+        start = timeit.default_timer()
         if self.bounds:
             arange = np.arange(4, len(self.memory) - self.history_len - 2 - self.t)
         else:
@@ -515,8 +540,14 @@ class DQN(Agent):
         if self.bounds:
             Umin = np.array(Us)
             Lmax = np.array(Ls)
+            # timer
+            end = timeit.default_timer()
+            self.get_batch_time += end - start
             return states, actions, s_nexts, rs, dones, Umin, Lmax
         else:
+            # timer
+            end = timeit.default_timer()
+            self.get_batch_time += end - start
             return states, actions, s_nexts, rs, dones
 
     def _get_history(self, idx):
@@ -529,19 +560,26 @@ class DQN(Agent):
         return state
 
     def _get_future(self, idx, k=4):
+        start = timeit.default_timer()
         m_slice = [self.memory[i] for i in xrange(idx, idx + k + 1)]
         R = np.array([t[4] for t in m_slice])
         s = np.concatenate([self._get_history(i) for i in xrange(idx + 1, idx + k + 1)], axis=0)
+        end = timeit.default_timer()
+        self.get_future_time += end - start
         return R, s
 
     def _get_past(self, idx, k=4):
+        start = timeit.default_timer()
         m_slice = [self.memory[i] for i in xrange(idx - k, idx + 1)]
         R = np.array([t[4] for t in m_slice])
         a = np.array([t[1] for t in m_slice])[:-1]
         s = np.concatenate([self._get_history(i) for i in xrange(idx - k, idx)], axis=0)
+        end = timeit.default_timer()
+        self.get_past_time += end - start
         return R, s, a
 
     def _get_bounds(self, idx, state, action, k=4):
+        start = timeit.default_timer()
         self.Umin = np.zeros((k,self.A.n))
         self.Lmax = np.zeros((k,self.A.n))
         Q = self.Q([state, np.zeros((1,self.A.n)), np.zeros((1,self.A.n))])
@@ -555,7 +593,24 @@ class DQN(Agent):
         Lmax[action] = L.max()
         # We need U and L to be equal to y_pred except for at action a:
         #   e.g. U = [y_pred[0], y_pred[1], 23, y_pred[3]]
+        end = timeit.default_timer()
+        self.get_bounds_time += end - start
         return Umin, Lmax
+
+    def times(self):
+        n = self.frame_count - self.random_start
+        m = (self.frame_count - self.random_start) // self.update_freq
+        if n <= 0:
+            self.act_time = self.observation_time = 0
+        print 'Act Time: \t\t\t', self.act_time / n
+        print 'Observation Time: \t\t', self.observation_time / n
+        print '\tGet Batch Time: \t', self.get_batch_time / m
+        print '\tGet Bounds Time: \t', self.get_bounds_time / m
+        print '\tGet Future Time: \t', self.get_future_time / m
+        print '\tGet Past Time: \t\t', self.get_past_time / m
+        print '\tQ Forward Pass Time: \t', self.Qforward_time / m
+        print '\tQ Backward Pass Time: \t', self.policy_update_time / m
+
 
     def save(self, s_dir):
         import os
