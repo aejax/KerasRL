@@ -56,8 +56,8 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
                 timer += 1
                 if timer == tMax:
                     done = True
-
                 l_sum += agent.observe(observation, reward, done, count_steps)
+
                 r_sum += reward
                 if timer == tMax:
                     done = True

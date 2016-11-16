@@ -430,7 +430,7 @@ class DQN(Agent):
         if self.frame_count < self.random_start:
             self.action = self.A.sample()
         else:
-            idx = len(self.memory)-self.history_len-1
+            idx = len(self.memory)-self.history_len
             state = self._get_history(idx)
             if self.bounds:
                 self.Umin = np.zeros((1,self.A.n))
@@ -536,6 +536,7 @@ class DQN(Agent):
         actions = np.array(actions)
         s_nexts = np.concatenate(s_nexts, axis=0)
         rs = np.array(rs)
+        rs = np.clip(rs, -1, 1)
         dones = np.array(dones)
         if self.bounds:
             Umin = np.array(Us)
