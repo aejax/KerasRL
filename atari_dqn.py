@@ -45,12 +45,12 @@ def get_agent(env, name=None):
     else:
         state_shape = (84,84,4)
     model = Sequential()
-    model.add(Convolution2D(32, 8, 8, subsample=(4,4), input_shape=state_shape, activation='relu'))
-    model.add(Convolution2D(64, 4, 4, subsample=(2,2), activation='relu'))
-    model.add(Convolution2D(64, 3, 3, subsample=(1,1), activation='relu'))
+    model.add(Convolution2D(32, 8, 8, subsample=(4,4), input_shape=state_shape, activation='relu', init='he_uniform'))
+    model.add(Convolution2D(64, 4, 4, subsample=(2,2), activation='relu', init='he_uniform'))
+    model.add(Convolution2D(64, 3, 3, subsample=(1,1), activation='relu', init='he_uniform'))
     model.add(Flatten())
-    model.add(Dense(512, activation='relu'))
-    model.add(Dense(A.n))
+    model.add(Dense(512, activation='relu', init='he_uniform'))
+    model.add(Dense(A.n, init='he_uniform'))
 
     config = model.get_config()
     model2 = Sequential.from_config(config)
