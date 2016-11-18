@@ -24,7 +24,7 @@ def yntotf(s):
         print '\'{}\' cannot be converted to True or False.'.format(s)
         return None
 
-def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
+def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq):
     returns = []
     losses = []
     if monitor:
@@ -72,6 +72,15 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
                     agent.times()
             returns.append(r_sum)
             losses.append(l_sum / timer)
+            # save the agent
+            if save and (episode+1)%save_freq == 0:
+                print 'Saving agent to {}'.format(s_dir)
+                begin = timeit.default_timer()
+                agent.save(s_dir)
+
+                end = timeit.default_timer()
+                dt = end - begin
+                print 'Save time: {:}min {:.3}s'.format(dt // 60, dt % 60)
 
     except KeyboardInterrupt:
         pass
@@ -106,7 +115,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir):
         plt.savefig('{}/{}.png'.format(s_dir, agent.name), format='png')
         plt.close('all')
 
-def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, s_dir):
+def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, s_dir, save_freq):
     env = gym.make(env_name)
     S = env.observation_space
     A = env.action_space
@@ -152,6 +161,7 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
     n_episode = n_episode
     tMax = env.spec.timestep_limit
     log_freq = log_freq
+    save_freq = save_freq
 
     #define agent
     if agent_name == 'simple_dqn':
@@ -178,7 +188,7 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
     # Perform test
     print 'Beginning training for {} episodes.'.format(n_episode)
     begin = timeit.default_timer()
-    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir)
+    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq)
     end = timeit.default_timer()
     dt = end - begin
     print 'Run time: {:}min {:.3}s'.format(dt // 60, dt % 60)
@@ -198,9 +208,10 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--agent', type=str, default='simple_dqn')
     parser.add_argument('-n', '--n_episode', type=int, default=100)
     parser.add_argument('--log', type=int, default=10)
+    parser.add_argument('--save_freq', type=int, default=100)
     parser.add_argument('-l', '--load_dir', type=str, default='')
     parser.add_argument('-s', '--save_dir', type=str, default='')
     parser.add_argument('-i', '--interactive', action='store_true')
 
     args = parser.parse_args()
-    test_session(args.environment, args.agent, args.n_episode, args.log, args.interactive, args.load_dir, args.save_dir)
+    test_session(args.environment, args.agent, args.n_episode, args.log, args.interactive, args.load_dir, args.save_dir, args.save_freq)
