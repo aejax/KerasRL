@@ -709,6 +709,154 @@ class CrossEntropy(Agent):
         else:
             return state
 
+class MatchingQLearning(Agent):
+
+#Matching net is composed of a feed forward neural network and a memory connection
+#The there are two inputs to the model the state and the current memory.
+
+# state = Input(shape=state_shape)
+# memory = Input(shape=memory_shape)
+# emb = Dense(emb_dim, activation='relu')(state)
+# out = merge([state, memory], mode=attention)
+# model = Model(input=[state, memory], output=[out,emb])
+
+    def __init__(self, S, A, gamma=0.99, memory_size=1000, memory_refresh=1000, embedding_size=10, update_freq=1, history_len=1, image=False, **kwargs):
+        super(MatchingQLearning, self).__init__(**kwargs)
+        assert self.policy, 'You must assign a policy for MatchingQLearning'
+        assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions'
+        self.Q = self.policy.Qfunction
+
+        self.S = S
+        self.A = A
+        self.gamma = gamma
+        self.memory_size = memory_size
+        self.memory_refresh = memory_refresh
+        self.embedding_size = embedding_size
+        self.update_freq = update_freq
+        self.history_len = history_len
+        self.image = image
+
+        self.memory = np.random.random((1,self.memory_size, self.embedding_size+self.A.n))
+        self.old_memory = np.copy(self.memory)
+        self.memory_item = np.zeros((self.embedding_size + self.A.n,))
+        self.rewards = []
+        self.states = []
+        self.actions = []
+        self.Qvalues = []
+
+        self.action = self.A.sample()
+        self.state = self._preprocess(self.S.sample())
+        self.update = np.zeros((1,A.n))
+
+        self.step_count = 0
+        self.idx = 0
+        self.loss = 0
+        self.refreshes = 0
+
+    def observe(self, s_next, r, done, n):
+        self.step_count += 1
+        
+        s_next = self._preprocess(s_next)        
+
+        if self.step_count % self.memory_refresh == 0:
+            print 'refreshing memeory'
+            self.refreshes += 1
+            self.old_memory = np.copy(self.memory)
+
+        if done:
+            update = r
+            self.rewards.append(r)
+            self._update_memory()
+        else:
+            update = r + self.Q([s_next,self.memory])[0].max()
+            self.rewards.append(r)
+            
+        self.update[0,self.action] = update
+        #self.memory_item[self.embedding_size+self.action] = update
+        #if self.idx >= self.memory_size:
+        #    self.idx = 0
+
+        #rand = np.random.rand(1)
+        #if rand > 0.0:
+        #    self.idx = np.random.randint(self.memory_size)
+
+        #self.memory[0,self.idx] = self.memory_item
+        #self.idx += 1
+
+        #self.update[0] = self.memory_item[-self.A.n:]
+        if self.step_count % self.update_freq == 0 and self.step_count > self.random_start:
+            self.loss, _, __ = self.policy.update([self.update,np.zeros((1,))], [s_next,self.old_memory])
+
+        if self.step_count % 100 == 0:
+            #print self.memory_item, self.action
+            print self.memory[0].mean(0)[-self.A.n:]
+            #for m in self.memory[0]:
+            #    print m
+
+        self.state = s_next
+        return self.loss
+        
+    def act(self, **kwargs):
+        Q, embedding = self.Q([self.state, self.memory])
+
+        if self.step_count > self.random_start:
+            self.memory_item = np.concatenate([embedding[0], Q[0]])
+            a = Q.argmax()
+            self.action = self.policy.randomness(a , **kwargs)
+        else:
+            self.action = np.random.randint(self.A.n)
+        self.states.append(embedding[0])
+        self.actions.append(self.action)
+        self.Qvalues.append(Q[0])
+        return self.action
+
+    def _preprocess(self, state):
+        if self.image:
+            # I need to process the state with the previous state
+            # I take the max pixel value of the two frames
+            #state[0] = np.maximum(state[0], self.prev_state[0])
+            #state[1] = np.maximum(state[1], self.prev_state[1])
+            #state[2] = np.maximum(state[2], self.prev_state[2])
+            # convert rgb image to yuv image
+            yCbCr = Image.fromarray(state, 'YCbCr')
+            # extract the y channel
+            y, Cb, Cr = yCbCr.split()
+            # rescale to 84x84
+            y_res = y.resize((84,84))
+            output = image.img_to_array(y_res)
+            output = np.array(output, dtype=np.uint8) #keep memory small
+        elif type(self.S) == gym.spaces.Discrete:
+            # one-hot encoding
+            output = np.zeros(self.S.n)
+            output[state] = 1
+        else:
+            output = state
+
+        return np.expand_dims(output, axis=0) #add axis for batch dimension
+
+    def _update_memory(self):
+        R = 0
+        #AR = np.zeros((self.A.n,))
+        i = len(self.states)
+        for s, r, a, Q in reversed(zip(self.states, self.rewards, self.actions, self.Qvalues)):
+            #print (self.idx+i)%self.memory_size,
+            R = r + self.gamma * R
+            #AR[a] = R
+            Q = 0.9 * Q
+            Q[a] = R
+            memory_item = np.concatenate([s,Q])
+            if self.idx+i >= self.memory_size:
+                self.memory[0,(self.idx+i)%self.memory_size] = memory_item
+            else:
+                self.memory[0,self.idx+i] = memory_item
+            i -= 1
+            
+        self.idx += len(self.states)
+        self.states = []
+        self.rewards = []
+        self.actions = []
+        self.Qvalues = []
+
 """
 class EpisodicControl(Agent):
     def __init__(self, S, A, embedding_function=None, Qfunction=None):

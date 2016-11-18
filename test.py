@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 import simple_dqn
 import atari_dqn
+import matching_q
 
 def yntotf(s):
     if s.lower() == 'y':
@@ -163,6 +164,11 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
             agent = atari_dqn.load(l_dir, env, name='DQN')
         else:
             agent = atari_dqn.get_agent(env, name='DQN')
+    elif agent_name == 'matching_q':
+        if load:
+            agent = matching_q.load(l_dir, env, name='MQL')
+        else:
+            agent = matching_q.get_agent(env, name='MQL')
     else:
         raise ValueError, '{} is not a valid agent name.'.format(agent_name)
 
