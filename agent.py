@@ -302,7 +302,8 @@ class DQN(Agent):
             self.Q = self.policy.Qfunction # make sure that the Q function is updated
             self.targetQ = targetQfunction
 
-        self.memory = deque(maxlen=memory_size) #deque handles length
+        #self.memory = deque(maxlen=memory_size) #deque handles length
+        self.memory = []
 
         self.gamma = gamma
         self.memory_size = memory_size
@@ -440,7 +441,11 @@ class DQN(Agent):
                 self.action = self.policy(state, **kwargs)
 
         transition = [self.state, self.action, self.r, self.done]
-        self.memory.append(transition)
+        if len(self.memory) >= self.memory_size:
+            self.memory.pop(0)
+            self.memory.append(transition)
+        else:
+            self.memory.append(transition)
         end = timeit.default_timer()
         self.act_time += end - start
         return self.action
@@ -494,10 +499,9 @@ class DQN(Agent):
         # we need to include a end of episode flag, (s, a, r, d), in the memory
         start = timeit.default_timer()
         if self.bounds:
-            arange = np.arange(4, len(self.memory) - self.history_len - 2 - self.t)
+            indices = np.random.randint(4, len(self.memory) - self.history_len - 2 - self.t, self.batch_size)
         else:
-            arange = np.arange(len(self.memory) - self.history_len -1)
-        indices = np.random.choice(arange, self.batch_size, replace=False)
+            indices = np.random.randint(0, len(self.memory) - self.history_len - 1, self.batch_size)
         states = []
         actions = []
         s_nexts = []
@@ -509,11 +513,11 @@ class DQN(Agent):
         for i in xrange(indices.shape[0]):
             idx = indices[i]
             # if done get a new index
-            m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+            m_slice = self.memory[idx:idx+self.history_len]
             done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
             while done:
-                idx = np.random.randint(len(self.memory) - self.history_len -1)
-                m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+                idx -= 1
+                m_slice = self.memory[idx:idx+self.history_len]
                 done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
             
             state = self._get_history(idx)
@@ -552,7 +556,7 @@ class DQN(Agent):
             return states, actions, s_nexts, rs, dones
 
     def _get_history(self, idx):
-        m_slice = [self.memory[i] for i in xrange(idx, idx + self.history_len)]
+        m_slice = self.memory[idx:idx+self.history_len]
         state = [memory[0] for memory in m_slice]
         if K.image_dim_ordering() == 'th':    
             state = np.concatenate(state, axis=1)
@@ -562,7 +566,7 @@ class DQN(Agent):
 
     def _get_future(self, idx, k=4):
         start = timeit.default_timer()
-        m_slice = [self.memory[i] for i in xrange(idx, idx + k + 1)]
+        m_slice = self.memory[idx:idx+k+1]
         R = np.array([t[4] for t in m_slice])
         s = np.concatenate([self._get_history(i) for i in xrange(idx + 1, idx + k + 1)], axis=0)
         end = timeit.default_timer()
@@ -571,7 +575,7 @@ class DQN(Agent):
 
     def _get_past(self, idx, k=4):
         start = timeit.default_timer()
-        m_slice = [self.memory[i] for i in xrange(idx - k, idx + 1)]
+        m_slice = self.memory[idx-k:idx+1]
         R = np.array([t[4] for t in m_slice])
         a = np.array([t[1] for t in m_slice])[:-1]
         s = np.concatenate([self._get_history(i) for i in xrange(idx - k, idx)], axis=0)

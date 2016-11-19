@@ -24,7 +24,7 @@ def yntotf(s):
         print '\'{}\' cannot be converted to True or False.'.format(s)
         return None
 
-def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq):
+def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq, time):
     returns = []
     losses = []
     if monitor:
@@ -66,10 +66,11 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
             if (episode+1)%log_freq == 0:
                 print 'Episode {} finished with return of {}.'.format(episode+1,r_sum)
                 e = timeit.default_timer()
-                print 'Training step time: ', (e - s) / timer
-                print 'Training steps: ', timer
-                if hasattr(agent, 'times'):
-                    agent.times()
+                if time:
+                    print 'Training step time: ', (e - s) / timer
+                    print 'Training steps: ', timer
+                    if hasattr(agent, 'times'):
+                        agent.times()
             returns.append(r_sum)
             losses.append(l_sum / timer)
             # save the agent
@@ -131,8 +132,10 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
     plot = False
     save = False
     load = False
+    time = True
 
     if interactive:
+        time = yntotf(raw_input('Time? [y/n] '))
         render = yntotf(raw_input('Render? [y/n] '))
         monitor = yntotf(raw_input('Monitor? [y/n] '))
         plot = yntotf(raw_input('Plot? [y/n] '))
@@ -188,7 +191,7 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
     # Perform test
     print 'Beginning training for {} episodes.'.format(n_episode)
     begin = timeit.default_timer()
-    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq)
+    run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, save, save_freq, time)
     end = timeit.default_timer()
     dt = end - begin
     print 'Run time: {:}min {:.3}s'.format(dt // 60, dt % 60)
