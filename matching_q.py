@@ -1,5 +1,6 @@
 import theano
 import theano.tensor as T
+import numpy as np
 from keras.models import Model
 from keras.layers import Dense, Input, merge
 
@@ -61,13 +62,12 @@ def get_agent(env, name=None):
     exploration_frames = 2000
 
     gamma = 0.99
-    memory_size = 200
-    memory_refesh = 1500
+    memory_size = 500
     embedding_size = 1
     memory_shape = (memory_size, embedding_size + A.n)
-    update_freq = 100
     history_len = 1
     image = False
+    batch_size = 128
     loss = ['mse', ignore]
     opt = 'adam'
     name = 'MQL' if name == None else name
@@ -75,16 +75,19 @@ def get_agent(env, name=None):
     #Define the model      
     state = Input(shape=S.shape)
     memory = Input(shape=memory_shape)
+    ind = Input(shape=(1,memory_size))
     #h1 = Dense(10, activation='relu')(state)
     #emb = Dense(embedding_size, activation='linear')(h1)
     emb = Dense(embedding_size, activation='linear')(state)
+
     out = merge([emb, memory], mode=attention(A.n), output_shape=(A.n,))
     model = Model(input=[state, memory], output=[out,emb])
 
     Q = KerasQ(model=model, loss=loss, optimizer=opt)
     policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
-    agent = MatchingQLearning(S, A, policy=policy, gamma=gamma, memory_size=memory_size, embedding_size=embedding_size, update_freq=update_freq,
-                              history_len=history_len, image=image, random_start=random_start, name=name)
+    agent = MatchingQLearning(S, A, policy=policy, gamma=gamma, memory_size=memory_size,
+                              embedding_size=embedding_size, history_len=history_len, image=image, 
+                              batch_size=batch_size, random_start=random_start, name=name)
 
     return agent
 

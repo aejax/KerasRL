@@ -5,6 +5,7 @@ import keras.backend as K
 import gym
 import timeit
 import argparse
+import cPickle as pkl
 
 import matplotlib
 #Force matplotlib to use any Xwindows backend
@@ -57,8 +58,9 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
                 timer += 1
                 if timer == tMax:
                     done = True
-                l_sum += agent.observe(observation, reward, done, count_steps)
+                loss = agent.observe(observation, reward, done, count_steps)
 
+                l_sum += loss
                 r_sum += reward
                 if timer == tMax:
                     done = True
@@ -102,6 +104,9 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
     print 'Average Reward: {}'.format(ave_r)
     print 'Max 100 Episode Average Reward: {}'.format(rMVA.max())
     print 'Number of environment steps: {}'.format(count_steps)
+
+    results = {'losses': losses, 'returns': returns}
+    pkl.dump(results, open('{}/{}_results.pkl'.format(s_dir,agent.name), 'w'))
 
     if plot:
         plt.figure()

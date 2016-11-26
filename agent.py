@@ -715,16 +715,8 @@ class CrossEntropy(Agent):
 
 class MatchingQLearning(Agent):
 
-#Matching net is composed of a feed forward neural network and a memory connection
-#The there are two inputs to the model the state and the current memory.
-
-# state = Input(shape=state_shape)
-# memory = Input(shape=memory_shape)
-# emb = Dense(emb_dim, activation='relu')(state)
-# out = merge([state, memory], mode=attention)
-# model = Model(input=[state, memory], output=[out,emb])
-
-    def __init__(self, S, A, gamma=0.99, memory_size=1000, memory_refresh=1000, embedding_size=10, update_freq=1, history_len=1, image=False, **kwargs):
+    def __init__(self, S, A, gamma=0.99, memory_size=1000, embedding_size=10, 
+                 history_len=1, image=False, batch_size=128, train=True, n_cycle=1, **kwargs):
         super(MatchingQLearning, self).__init__(**kwargs)
         assert self.policy, 'You must assign a policy for MatchingQLearning'
         assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions'
@@ -734,68 +726,81 @@ class MatchingQLearning(Agent):
         self.A = A
         self.gamma = gamma
         self.memory_size = memory_size
-        self.memory_refresh = memory_refresh
         self.embedding_size = embedding_size
-        self.update_freq = update_freq
         self.history_len = history_len
         self.image = image
+        self.batch_size = batch_size
+        self.train = train
+        self.n_cycle = n_cycle
 
         self.memory = np.random.random((1,self.memory_size, self.embedding_size+self.A.n))
         self.old_memory = np.copy(self.memory)
         self.memory_item = np.zeros((self.embedding_size + self.A.n,))
         self.rewards = []
         self.states = []
+        self.embeddings = []
         self.actions = []
         self.Qvalues = []
+        self.returns = []
 
         self.action = self.A.sample()
         self.state = self._preprocess(self.S.sample())
         self.update = np.zeros((1,A.n))
 
         self.step_count = 0
+        self.time = 0
+        self.time_max = 0
         self.idx = 0
         self.loss = 0
         self.refreshes = 0
+        self.update_emb = False
+        self.max_found = False
 
     def observe(self, s_next, r, done, n):
         self.step_count += 1
-        
-        s_next = self._preprocess(s_next)        
+        self.time += 1
 
-        if self.step_count % self.memory_refresh == 0:
-            print 'refreshing memeory'
-            self.refreshes += 1
-            self.old_memory = np.copy(self.memory)
+        if self.step_count % self.memory_size:
+            self.refitANN = True
+
+        s_next = self._preprocess(s_next) 
+        self.states.append(s_next)        
+        self.rewards.append(r)
 
         if done:
-            update = r
-            self.rewards.append(r)
-            self._update_memory()
-        else:
-            update = r + self.Q([s_next,self.memory])[0].max()
-            self.rewards.append(r)
+            self.embeddings.append(np.zeros((self.embedding_size,)))
+            self.Qvalues.append(np.zeros((self.A.n,)))
+            self.actions.append(0)
+
+            self.returns.extend(self._get_returns())
+            print self.time_max, self.time
+            if self.time > self.time_max:
+                self.time_max = self.time
+                self.max_found = True
+            if len(self.returns) >= self.memory_size and self.max_found:
+                self._update_memory()
+                self.max_found = False
+
+            if len(self.returns) >= self.memory_size:
+                self.update_emb = True
+            self.time = 0
             
-        self.update[0,self.action] = update
-        #self.memory_item[self.embedding_size+self.action] = update
-        #if self.idx >= self.memory_size:
-        #    self.idx = 0
-
-        #rand = np.random.rand(1)
-        #if rand > 0.0:
-        #    self.idx = np.random.randint(self.memory_size)
-
-        #self.memory[0,self.idx] = self.memory_item
-        #self.idx += 1
-
-        #self.update[0] = self.memory_item[-self.A.n:]
-        if self.step_count % self.update_freq == 0 and self.step_count > self.random_start:
-            self.loss, _, __ = self.policy.update([self.update,np.zeros((1,))], [s_next,self.old_memory])
-
-        if self.step_count % 100 == 0:
-            #print self.memory_item, self.action
-            print self.memory[0].mean(0)[-self.A.n:]
-            #for m in self.memory[0]:
-            #    print m
+        if self.update_emb:
+            if self.train:
+                nothing = np.zeros((self.batch_size,))
+                updates, states = self._get_batch()
+                memorys = np.tile(self.memory, (self.batch_size, 1, 1))
+                for _ in xrange(self.n_cycle):
+                    self.loss, _, __ = self.policy.update([updates, nothing], [states, memorys])
+            self.update_emb = False
+            self.states = []
+            self.embeddings = []
+            self.rewards = []
+            self.actions = []
+            self.Qvalues = []
+            self.returns = []
+        else:
+            self.loss = 0
 
         self.state = s_next
         return self.loss
@@ -809,7 +814,7 @@ class MatchingQLearning(Agent):
             self.action = self.policy.randomness(a , **kwargs)
         else:
             self.action = np.random.randint(self.A.n)
-        self.states.append(embedding[0])
+        self.embeddings.append(embedding[0])
         self.actions.append(self.action)
         self.Qvalues.append(Q[0])
         return self.action
@@ -838,28 +843,43 @@ class MatchingQLearning(Agent):
 
         return np.expand_dims(output, axis=0) #add axis for batch dimension
 
-    def _update_memory(self):
+    def _get_returns(self):
+        returns = []
         R = 0
-        #AR = np.zeros((self.A.n,))
-        i = len(self.states)
-        for s, r, a, Q in reversed(zip(self.states, self.rewards, self.actions, self.Qvalues)):
-            #print (self.idx+i)%self.memory_size,
-            R = r + self.gamma * R
-            #AR[a] = R
-            Q = 0.9 * Q
-            Q[a] = R
+        for t in range(self.time):
+            R = self.rewards[-(t+1)] + self.gamma * R
+            returns.append(R)
+        returns.reverse()
+        return returns
+    
+    def _update_memory(self):
+        self.old_memory = np.copy(self.memory)
+
+        j = 0
+        indices = np.random.choice(len(self.embeddings), size=self.memory_size, replace=False)
+        for i in indices:
+            s = self.embeddings[i]
+            R = self.returns[i]
+            a = self.actions[i]
+            Q = self.Qvalues[i]
+            Q[a] = R 
             memory_item = np.concatenate([s,Q])
-            if self.idx+i >= self.memory_size:
-                self.memory[0,(self.idx+i)%self.memory_size] = memory_item
-            else:
-                self.memory[0,self.idx+i] = memory_item
-            i -= 1
-            
-        self.idx += len(self.states)
-        self.states = []
-        self.rewards = []
-        self.actions = []
-        self.Qvalues = []
+            # add new memorys from 0 to memory_size 
+            self.memory[0,j] = memory_item
+            j += 1
+    
+    def _get_batch(self):
+        indices = np.random.choice(len(self.returns), size=self.batch_size)
+        updates = []
+        states = []
+        for i in indices:
+            update = self.Qvalues[i]
+            update[self.actions[i]] = self.returns[i]
+            updates.append(update) 
+            states.append(self.states[i])
+        updates = np.array(updates)
+        states = np.concatenate(states)
+        return updates, states
 
 """
 class EpisodicControl(Agent):
