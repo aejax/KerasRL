@@ -170,10 +170,22 @@ class Agent(object):
 
         self.state = None
         self.action = None
-    def observe(self, s_next, r, done, info=None):
+        self.step_count = 0
+    def observe(self, s_next, r, done, *args, **kwargs):
+        self.step_count += 1
+        return self._observe(s_next, r, done, *args, **kwargs)
+
+    def _observe(self, s_next, r, done, info=None):
         self.state = s_next
 
     def act(self, **kwargs):
+        if self.step_count < self.random_start:
+            self.action = self.A.sample()
+            return self.action
+        else:
+            return self._act(**kwargs)
+
+    def _act(self, **kwargs):
         self.action = self.policy(self.state, **kwargs)
         return self.action
 
@@ -750,13 +762,14 @@ class MatchingQLearning(Agent):
         self.step_count = 0
         self.time = 0
         self.time_max = 0
+        self.returns_max = -np.inf
         self.idx = 0
         self.loss = 0
         self.refreshes = 0
         self.update_emb = False
         self.max_found = False
 
-    def observe(self, s_next, r, done, n):
+    def observe(self, s_next, r, done):
         self.step_count += 1
         self.time += 1
 
@@ -773,10 +786,13 @@ class MatchingQLearning(Agent):
             self.actions.append(0)
 
             self.returns.extend(self._get_returns())
-            print self.time_max, self.time
-            if self.time > self.time_max:
-                self.time_max = self.time
+            print self.returns_max, self.returns[-self.time]
+            if self.returns[-self.time] > self.returns_max:
+                self.returns_max = self.returns[-self.time]
                 self.max_found = True
+            #if self.time > self.time_max:
+            #    self.time_max = self.time
+            #    self.max_found = True
             if len(self.returns) >= self.memory_size and self.max_found:
                 self._update_memory()
                 self.max_found = False
@@ -853,10 +869,11 @@ class MatchingQLearning(Agent):
         return returns
     
     def _update_memory(self):
-        self.old_memory = np.copy(self.memory)
-
         j = 0
         indices = np.random.choice(len(self.embeddings), size=self.memory_size, replace=False)
+
+        states = np.array(self.states)
+        self.old_states = states[indices]
         for i in indices:
             s = self.embeddings[i]
             R = self.returns[i]
@@ -867,7 +884,30 @@ class MatchingQLearning(Agent):
             # add new memorys from 0 to memory_size 
             self.memory[0,j] = memory_item
             j += 1
-    
+
+    def _update_emb(self):
+
+        if self.train:
+            nothing = np.zeros((self.batch_size,))
+            updates, states = self._get_batch()
+            memorys = np.tile(self.memory, (self.batch_size, 1, 1))
+            for _ in xrange(self.n_cycle):
+                self.loss, _, __ = self.policy.update([updates, nothing], [states, memorys])
+
+            # insert new embedding of old states into memory
+            memorys = np.tile(self.memory, (self.memory_size, 1, 1))
+            Q, embs = self.Q([self.old_states, memorys])
+            print embs.shape
+            self.memory[:,-self.A.n] = embs 
+
+        self.update_emb = False
+        self.states = []
+        self.embeddings = []
+        self.rewards = []
+        self.actions = []
+        self.Qvalues = []
+        self.returns = []    
+
     def _get_batch(self):
         indices = np.random.choice(len(self.returns), size=self.batch_size)
         updates = []
@@ -881,31 +921,41 @@ class MatchingQLearning(Agent):
         states = np.concatenate(states)
         return updates, states
 
-"""
+
 class EpisodicControl(Agent):
-    def __init__(self, S, A, embedding_function=None, Qfunction=None):
+    def __init__(self, S, A, embedding_function=None, Qfunction=None, gamma=0.99, image=False, **kwargs):
         super(EpisodicControl, self).__init__(**kwargs)
 
         self.S = S
         self.A = A
+        self.gamma = gamma
+        self.image = image
 
-        if embedding_function == None:
-            s_dim = get_space_dim(self.S)
-            if s_dim > 10:
-                RM = np.random.random((10, s_dim))
-                self.phi = lambda o: np.dot(RM, o.flatten())
-            else:
-                self.phi = lambda o: o
-        else:
-            self.phi = embedding_function
+        
    
         if self.policy == None:
             if Qfunction == None:
-                Qfunction = KNNQ(S, A)
+                Qfunction = TableQ2(self.S, self.A)
             self.policy == MaxQ(Qfunction)
         assert hasattr(self.policy, 'Qfunction'), 'Policy must use Qfunctions.'
-        self.Q = self.policy.Qfunction
+        self.Q_ec = self.policy.Qfunction
 
+        self.embedding_dim = self.Q_ec.embedding_dim
+
+        if embedding_function == None:
+            s_dim = get_space_dim(self.S)
+            if s_dim > self.embedding_dim:
+                RM = np.random.random((self.embedding_dim, s_dim))
+                #self.phi = lambda o: round(np.dot(RM, o.flatten())[0], 3)
+                self.phi = lambda o: o.round(2)
+            else:
+                #self.phi = lambda o: round(o[0],3)
+                self.phi = lambda o: o.round(2)
+        else:
+            self.phi = embedding_function
+
+        self.t = 0
+        self.episode_count = 0
         self.rewards = []
         self.states = []
         self.actions = []
@@ -913,27 +963,66 @@ class EpisodicControl(Agent):
         self.state  = self.phi(self._preprocess(self.S.sample()))
         self.action = self.A.sample()
 
-    def observe(self, s_next, r, done):
-        if not done:
-            self.state = self.phi(self._preprocess(s_next))
-            self.states.append(self.state)
-            self.rewards.append(r)
-            return 0
-        else:
+    def _observe(self, s_next, r, done):
+        self.t += 1
+        self.rewards.append(r)
+        self.states.append(self.state)
+        self.actions.append(self.action)
+
+        self.state = self.phi(self._preprocess(s_next))
+
+        if done:
+            self.episode_count += 1
             R_tp1 = 0
-            for r, s, a in zip(reversed(self.rewards), reversed(self.states), reversed(self.actions)):
+            for t in reversed(xrange(self.t)):
+                r = self.rewards[t]
+                s = self.states[t]
+                a = self.actions[t]
                 R = r + self.gamma*R_tp1
-                Q_ec(s, a) = R
-                target = np.zeros(self.A.n)
-                target[a] = R
+
+                # initilize Q values from memory or as NaN
+                if self.Q_ec.contains(s):
+                    Q = self.Q_ec(s)
+                else:
+                    Q = np.zeros(self.A.n)
+                    #Q.fill(-np.inf)
+
+                # update the memory
+                if self.Q_ec.contains(s,a):
+                    Q[a] = max(Q[a], R)
+                else:
+                    Q[a] = R
+                #Q[a] = R
+
+                self.Q_ec.update(Q, s)
+
+                #print s, a, Q
+
+                R_tp1 = R
+
+            self.t = 0
+            self.rewards = []
+            self.states = []
+            self.actions = []
+
+            if self.episode_count % 100 == 0:
+                self.Q_ec.fit()
+
+            #print self.Q_ec.table.keys()
+            return R_tp1
+        else:
+            return 0
+
+    def _act(self, **kwargs):
+        #self.action = self.policy(self.state)
+        Q = self.Q_ec(self.state)
+        self.action = Q.argmax()
+        if self.episode_count % 100 == 0:
+            print self.t, self.state, self.Q_ec(self.state), self.action
+        return self.action
 
     def _preprocess(self, state):
         if self.image:
-            # I need to process the state with the previous state
-            # I take the max pixel value of the two frames
-            state[0] = np.maximum(state[0], self.prev_state[0])
-            state[1] = np.maximum(state[1], self.prev_state[1])
-            state[2] = np.maximum(state[2], self.prev_state[2])
             # convert rgb image to yuv image
             yCbCr = Image.fromarray(state, 'YCbCr')
             # extract the y channel
@@ -942,12 +1031,13 @@ class EpisodicControl(Agent):
             y_res = y.resize((84,84))
             output = image.img_to_array(y_res)
             output = np.array(output, dtype=np.uint8) #keep memory small
-        elif type(self.S) == gym.spaces.Discrete:
-            # one-hot encoding
-            output = np.zeros(self.S.n)
-            output[state] = 1
         else:
             output = state
 
-        return np.expand_dims(output, axis=0) #add axis for batch dimension
-"""
+        return output
+
+    def save(self, s_dir):
+        self.policy.save(s_dir)
+
+    def load(self, l_dir):
+        self.policy.load(l_dir)

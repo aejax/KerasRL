@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import simple_dqn
 import atari_dqn
 import matching_q
+import ec
 
 def yntotf(s):
     if s.lower() == 'y':
@@ -39,7 +40,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
         for episode in xrange(n_episode):
             observation = env.reset()
             done = False
-            l_sum = agent.observe(observation, 0, done, count_steps)
+            l_sum = agent.observe(observation, 0, done)
             count_steps += 1
             r_sum = 0
             timer = 0
@@ -58,7 +59,7 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
                 timer += 1
                 if timer == tMax:
                     done = True
-                loss = agent.observe(observation, reward, done, count_steps)
+                loss = agent.observe(observation, reward, done)
 
                 l_sum += loss
                 r_sum += reward
@@ -107,6 +108,22 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
 
     results = {'losses': losses, 'returns': returns}
     pkl.dump(results, open('{}/{}_results.pkl'.format(s_dir,agent.name), 'w'))
+
+    #print sorted(agent.Q_ec.table.keys())
+    #for k in agent.Q_ec.table:
+    #    p = np.random.random(1)        
+    #    if p < 0.01:
+    #        print agent.Q_ec.table[k]
+    #print len(agent.Q_ec.table)
+
+    #for s in agent.Q_ec.states:
+    #    p = np.random.random(1)        
+    #    if p < 0.001:
+    #        print s
+    #print agent.Q_ec.i
+
+    #for i in xrange(agent.A.n):
+    #    print len(agent.Q_ec.action_tables[i][0]),
 
     if plot:
         plt.figure()
@@ -187,6 +204,11 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
             agent = matching_q.load(l_dir, env, name='MQL')
         else:
             agent = matching_q.get_agent(env, name='MQL')
+    elif agent_name == 'ec':
+        if load:
+            agent = ec.load(l_dir, env)
+        else:
+            agent = ec.get_agent(env)
     else:
         raise ValueError, '{} is not a valid agent name.'.format(agent_name)
 

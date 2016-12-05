@@ -2,7 +2,7 @@ import theano
 import theano.tensor as T
 import numpy as np
 from keras.models import Model
-from keras.layers import Dense, Input, merge
+from keras.layers import Dense, Input, merge, Flatten
 
 from agent import MaxQ, MatchingQLearning, SAepsilon_greedy
 from value import KerasQ
@@ -43,10 +43,94 @@ def batch_sim(w, M, eps=1e-6):
     sim = sim.dimshuffle(1,0) # (batch, memory_size)
     return sim
 
+def batch_sim2(w, M, eps=1e-6):
+    """
+    w: matrix with shape (batch, memory_elem)
+    M: matrix with shape (memory_size, memory_elem)
+    eps: numerical stability parameter
+    """
+    M = M.dimshuffle(1,0) # (memory_elem, memory_size)
+    batch_sim = T.dot(w, M) #(batch, memory_size)
+    return batch_sim
+
+def batch_sim3(w, M, eps=1e-6):
+    """
+    w: matrix with shape (batch, memory_elem)
+    M: tensor with shape (batch, memory_size, memory_elem)
+    eps: numerical stability parameter
+    """
+    M = M[0] #only one true memory
+    M = M.dimshuffle(1,0) # (memory_elem, memory_size)
+    batch_sim = T.dot(w, M) #(batch, memory_size)
+    return batch_sim
+
+def batch_sim4(w, M, eps=1e-6):
+    """
+    w: matrix with shape (batch, memory_elem)
+    M: tensor with shape (batch, memory_size, memory_elem)
+    eps: numerical stability parameter
+    """
+    M = M[0] #only one true memory
+    #M = M.dimshuffle(1,0) # (memory_elem, memory_size)
+    def norm(A):
+        """
+        Calculate the column norm of matrix A
+        A: matrix with shape (N, M)
+        return: vector with shape (N,)
+        """
+        return T.sqrt(T.dot(A,A.T).diagonal())
+
+    norm = T.outer(norm(w), norm(M)) #(batch, memory_size)
+    batch_sim = T.dot(w, M.T) / (norm + eps) #(batch, memory_size)
+    return batch_sim
+
+def batch_sim5(w, M, eps=1e-6):
+    """
+    w: matrix with shape (batch, memory_elem)
+    M: tensor with shape (batch, memory_size, memory_elem)
+    eps: numerical stability parameter
+    """
+    M = M[0] # (memory_size, memory_elem)
+    def batch_cos_sim(m, w, eps=eps):
+        """
+        Takes two vectors and calculates the scalar cosine similarity.
+
+        m: vector with shape (memory_elem,)
+        w: vector with shape (batch, memory_elem)
+        returns: scalar
+        """
+        sim = T.dot(m,w.T) / T.sqrt((m*m).sum() * (w*w).sum(1) + eps)
+        return sim #(batch,)
+
+    sim, _ = theano.map(fn=batch_cos_sim, sequences=[M], non_sequences=[w])
+    sim = sim.dimshuffle(1,0) # (batch, memory_size)
+    return sim
+
+def batch_sim6(w, M, eps=1e-6):
+    """
+    w: matrix with shape (batch, memory_elem)
+    M: tensor with shape (batch, memory_size, memory_elem)
+    eps: numerical stability parameter
+    """
+    M = M[0] #only one true memory
+    #M = M.dimshuffle(1,0) # (memory_elem, memory_size)
+    def norm(A):
+        """
+        Calculate the column norm of matrix A
+        A: matrix with shape (N, M)
+        return: vector with shape (N,)
+        """
+        n, _ = theano.map(fn=lambda a: T.sqrt((a*a).sum()), sequences=[A])
+        return n
+
+    norm = T.outer(norm(w), norm(M)) #(batch, memory_size)
+    batch_sim = T.dot(w, M.T) / (norm + eps) #(batch, memory_size)
+    return batch_sim
+
 def attention(a_dim):
     def Att(tensors):
         emb, memory = tensors
-        a = T.nnet.softmax(batch_sim(emb, memory[:,:,:-a_dim]))
+        a = T.nnet.softmax(batch_sim6(emb, memory[:,:,:-a_dim]))
         return T.dot(a, memory[0,:,-a_dim:])
     return Att
 
@@ -56,18 +140,19 @@ def ignore(y_true, y_pred):
 def get_agent(env, name=None):
     S = env.observation_space
     A = env.action_space
-
+    print S.shape
     random_start = 2000
     epsilon = 0.01
-    exploration_frames = 2000
+    exploration_frames = 50000
 
     gamma = 0.99
-    memory_size = 500
-    embedding_size = 1
+    memory_size = 5000
+    embedding_size = 100
     memory_shape = (memory_size, embedding_size + A.n)
     history_len = 1
     image = False
     batch_size = 128
+    train = True
     loss = ['mse', ignore]
     opt = 'adam'
     name = 'MQL' if name == None else name
@@ -78,7 +163,8 @@ def get_agent(env, name=None):
     ind = Input(shape=(1,memory_size))
     #h1 = Dense(10, activation='relu')(state)
     #emb = Dense(embedding_size, activation='linear')(h1)
-    emb = Dense(embedding_size, activation='linear')(state)
+    flat = Flatten()(state)
+    emb = Dense(embedding_size, activation='linear')(flat)
 
     out = merge([emb, memory], mode=attention(A.n), output_shape=(A.n,))
     model = Model(input=[state, memory], output=[out,emb])
@@ -87,7 +173,7 @@ def get_agent(env, name=None):
     policy = MaxQ(Q, randomness=SAepsilon_greedy(A, epsilon=epsilon, final=exploration_frames))
     agent = MatchingQLearning(S, A, policy=policy, gamma=gamma, memory_size=memory_size,
                               embedding_size=embedding_size, history_len=history_len, image=image, 
-                              batch_size=batch_size, random_start=random_start, name=name)
+                              batch_size=batch_size, train=train, random_start=random_start, name=name)
 
     return agent
 
