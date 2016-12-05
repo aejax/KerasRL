@@ -191,19 +191,19 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
     #define agent
     if agent_name == 'simple_dqn':
         if load:
-            agent = simple_dqn.load(l_dir, env, name='sDDQNb')
+            agent = simple_dqn.load(l_dir, env)
         else:
-            agent = simple_dqn.get_agent(env, name='sDDQNb')
+            agent = simple_dqn.get_agent(env)
     elif agent_name == 'atari_dqn':
         if load:
-            agent = atari_dqn.load(l_dir, env, name='DQN')
+            agent = atari_dqn.load(l_dir, env)
         else:
-            agent = atari_dqn.get_agent(env, name='DQN')
+            agent = atari_dqn.get_agent(env)
     elif agent_name == 'matching_q':
         if load:
-            agent = matching_q.load(l_dir, env, name='MQL')
+            agent = matching_q.load(l_dir, env)
         else:
-            agent = matching_q.get_agent(env, name='MQL')
+            agent = matching_q.get_agent(env)
     elif agent_name == 'ec':
         if load:
             agent = ec.load(l_dir, env)

@@ -31,7 +31,7 @@ def get_agent(env, name=None):
     update_freq = 4 # update every 4 steps or 4 frames?
     history_len = 4
     batch_size = 32
-    loss = 'mse'
+    loss = huber_loss
     opt =  RMSprop(lr=0.00025)
     bounds = False
     double = False
@@ -68,9 +68,9 @@ def get_agent(env, name=None):
 def load(l_dir, env, name=None):
     agent = get_agent(env, name=name)
 
-    loss = 'mse'
+    loss = huber_loss
     opt =  RMSprop(lr=0.00025)
-    agent.load(l_dir, loss=loss, optimizer=opt)
+    agent.load(l_dir, loss=loss, optimizer=opt, custom_objects={'huber_loss':huber_loss})
     return agent
     
 

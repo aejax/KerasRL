@@ -34,11 +34,12 @@ def get_agent(env, name=None):
     history_len = 1
     batch_size = 32
     loss = huber_loss
-    opt =  RMSprop(lr=0.00025)
-    bounds = True
-    double = True
+    #opt =  RMSprop(lr=0.00025)
+    opt = 'adam'
+    bounds = False
+    double = False
     update_cycles = None
-    name = 'DQN' if name == None else name
+    name = 'sDQN' if name == None else name
     image = False
  
     # define the model

@@ -365,17 +365,27 @@ class DQN(Agent):
             self.targetQ(self.state)
         self.state = self.prev_state
 
-    def observe(self, s_next, r, done, n):
+    #def observe(self, s_next, r, done, n):
+    def observe(self, s_next, r, done):
         start0 = timeit.default_timer()
         self.frame_count += 1
         self.t += 1
 
         # update the target network
-        if n % self.target_update_freq == 0:
+        #if n % self.target_update_freq == 0:
+        #    self.targetQ.model.set_weights(self.Q.model.get_weights())
+        if self.frame_count % self.target_update_freq == 0:
             self.targetQ.model.set_weights(self.Q.model.get_weights())
-
         next_state = self._preprocess(s_next)
         self.prev_state = s_next
+
+        # update memory
+        transition = [next_state, None, r, done]
+        if len(self.memory) >= self.memory_size:
+            self.memory.pop(0)
+            self.memory.append(transition)
+        else:
+            self.memory.append(transition)
 
         # update the policy
         start = timeit.default_timer()
@@ -443,8 +453,10 @@ class DQN(Agent):
         if self.frame_count < self.random_start:
             self.action = self.A.sample()
         else:
-            idx = len(self.memory)-self.history_len
-            state = self._get_history(idx)
+            #idx = len(self.memory)-self.history_len
+            #state = self._get_history(idx)
+            idx = len(self.memory)-1
+            state = self._get_history2(idx)
             if self.bounds:
                 self.Umin = np.zeros((1,self.A.n))
                 self.Lmax = np.zeros((1,self.A.n))
@@ -452,12 +464,15 @@ class DQN(Agent):
             else:
                 self.action = self.policy(state, **kwargs)
 
-        transition = [self.state, self.action, self.r, self.done]
-        if len(self.memory) >= self.memory_size:
-            self.memory.pop(0)
-            self.memory.append(transition)
-        else:
-            self.memory.append(transition)
+        #transition = [self.state, self.action, self.r, self.done]
+        #if len(self.memory) >= self.memory_size:
+        #    self.memory.pop(0)
+        #    self.memory.append(transition)
+        #else:
+        #    self.memory.append(transition)
+
+        self.memory[-1][1] = self.action #add action to transition
+
         end = timeit.default_timer()
         self.act_time += end - start
         return self.action
@@ -510,10 +525,14 @@ class DQN(Agent):
         # in this case we ignore the next state and just use the reward in the update
         # we need to include a end of episode flag, (s, a, r, d), in the memory
         start = timeit.default_timer()
+        #if self.bounds:
+        #    indices = np.random.randint(4, len(self.memory) - self.history_len - 2 - self.t, self.batch_size)
+        #else:
+        #    indices = np.random.randint(0, len(self.memory) - self.history_len - 1, self.batch_size)
         if self.bounds:
-            indices = np.random.randint(4, len(self.memory) - self.history_len - 2 - self.t, self.batch_size)
+            indices = np.random.randint(4, len(self.memory) - 2 - self.t, self.batch_size) # why minus two?
         else:
-            indices = np.random.randint(0, len(self.memory) - self.history_len - 1, self.batch_size)
+            indices = np.random.randint(self.history_len, len(self.memory) - 1, self.batch_size) #why minus one? because we need next transition
         states = []
         actions = []
         s_nexts = []
@@ -525,18 +544,26 @@ class DQN(Agent):
         for i in xrange(indices.shape[0]):
             idx = indices[i]
             # if done get a new index
-            m_slice = self.memory[idx:idx+self.history_len]
-            done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
+            #m_slice = self.memory[idx:idx+self.history_len]
+            #done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
+            done = reduce(lambda x,y: x or y, self._get_history2(idx, content=3, cat=False))
             while done:
                 idx -= 1
-                m_slice = self.memory[idx:idx+self.history_len]
-                done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
+                #m_slice = self.memory[idx:idx+self.history_len]
+                #done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
+                done = reduce(lambda x,y: x or y, self._get_history2(idx, content=3, cat=False))
             
-            state = self._get_history(idx)
-            action = self.memory[idx + self.history_len][1]
-            next_state = self._get_history(idx+1)
-            reward = self.memory[idx + self.history_len + 1][2]
-            done =   self.memory[idx + self.history_len + 1][3]
+            #state = self._get_history(idx)
+            #action = self.memory[idx + self.history_len][1]
+            #next_state = self._get_history(idx+1)
+            #reward = self.memory[idx + self.history_len + 1][2]
+            #done =   self.memory[idx + self.history_len + 1][3]
+
+            state = self._get_history2(idx)
+            action = self.memory[idx][1]
+            next_state = self._get_history2(idx+1)
+            reward = self.memory[idx + 1][2]
+            done =   self.memory[idx + 1][3]
 
             states.append(state)
             actions.append(action)
@@ -552,7 +579,6 @@ class DQN(Agent):
         actions = np.array(actions)
         s_nexts = np.concatenate(s_nexts, axis=0)
         rs = np.array(rs)
-        rs = np.clip(rs, -1, 1)
         dones = np.array(dones)
         if self.bounds:
             Umin = np.array(Us)
@@ -575,6 +601,18 @@ class DQN(Agent):
         else:
             state = np.concatenate(state, axis=-1)
         return state
+
+    def _get_history2(self, idx, content=0, cat=True):
+        m_slice = self.memory[idx-self.history_len+1:idx+1]
+        c_slice = [memory[content] for memory in m_slice]
+        if cat:
+            if K.image_dim_ordering() == 'th':    
+                out = np.concatenate(c_slice, axis=1)
+            else:
+                out = np.concatenate(c_slice, axis=-1)
+        else:
+            out = c_slice
+        return out   
 
     def _get_future(self, idx, k=4):
         start = timeit.default_timer()
