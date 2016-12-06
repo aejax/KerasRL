@@ -45,9 +45,12 @@ def get_agent(env, name=None):
     # define the model
     model = Sequential()
     if type(S) == gym.spaces.Discrete:
-        model.add(Dense(50, input_dim=S.n, activation='relu', name='l1'))
+        input_dim = history_len*S.n
+        model.add(Dense(50, input_dim=input_dim, activation='relu', name='l1'))
     else:
-        model.add(Dense(50, input_shape=S.shape, activation='relu', name='l1'))
+        input_shape = [dim for dim in S.shape]
+        input_shape[-1] *= history_len
+        model.add(Dense(50, input_shape=input_shape, activation='relu', name='l1'))
     model.add(Dense(100, activation='relu', name='l2'))
     model.add(Dense(50, activation='relu', name='l3'))
     model.add(Dense(A.n, activation='linear', name='l4'))

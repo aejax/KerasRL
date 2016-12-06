@@ -350,7 +350,8 @@ class DQN(Agent):
             self.Lmax = np.zeros((1,A.n))
             
 
-        if self.image:
+        #if self.image:
+        if self.history_len > 1:
             if K.image_dim_ordering() == 'th': 
                 self.state = np.concatenate([self._preprocess(self.S.sample()) for i in xrange(self.history_len)], axis=1)
             else:
@@ -543,15 +544,25 @@ class DQN(Agent):
             Ls = []
         for i in xrange(indices.shape[0]):
             idx = indices[i]
+            # for not falling off the edge
+            if idx >= 2*self.history_len-1:
+                decrease = True
+            else:
+                decrease = False
             # if done get a new index
             #m_slice = self.memory[idx:idx+self.history_len]
             #done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
-            done = reduce(lambda x,y: x or y, self._get_history2(idx, content=3, cat=False))
+            d_slice = self._get_history2(idx, content=3, cat=False)
+            done = reduce(lambda x,y: x or y, d_slice)
             while done:
-                idx -= 1
+                if decrease:
+                    idx -= 1
+                else:
+                    idx += 1
                 #m_slice = self.memory[idx:idx+self.history_len]
                 #done = reduce(lambda x,y: x or y, [memory[3] for memory in m_slice])
-                done = reduce(lambda x,y: x or y, self._get_history2(idx, content=3, cat=False))
+                d_slice = self._get_history2(idx, content=3, cat=False)
+                done = reduce(lambda x,y: x or y, d_slice)
             
             #state = self._get_history(idx)
             #action = self.memory[idx + self.history_len][1]
