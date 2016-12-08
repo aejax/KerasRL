@@ -16,17 +16,9 @@ def get_agent(env, name=None):
     S = env.observation_space
     A = env.action_space
 
-    if hasattr(env, 'frameskip'):
-        frameskip = env.frameskip
-        if isinstance(frameskip, tuple):
-            valid_frames = range(frameskip[0], frameskip[1])
-            frameskip = reduce(lambda x, y: x+y, valid_frames) // len(valid_frames)
-    else:
-        frameskip = 1
-
     memory_size = 50000
-    random_start = 500 // frameskip
-    exploration_frames = 10000 // frameskip
+    random_start = 500
+    exploration_frames = 10000
     epsilon = 0.01
     gamma = 0.99               
     target_update_freq = 1000
