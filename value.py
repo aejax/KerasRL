@@ -222,12 +222,23 @@ class TableQ2(ValueFunction):
             self.k = 4
             self.action_tables = [ [[],[], KNeighborsRegressor(n_neighbors=self.k), []]
                                    for _ in xrange(self.A.n)]
-            for states, values, neigh, recency in self.action_tables:
+            """
+            for at in self.action_tables:
+                states, values, neigh, recency = at
                 for _ in xrange(self.k):
-                    states.append(np.ones(self.embedding_dim))
-                    values.append(1)
+                    if self.embedding_dim > 1:
+                        states.append(np.ones(self.embedding_dim))
+                    else:
+                        states.append(1)
+                    values.append(0)
                     recency.append(0)
-                neigh.fit(np.array(states), np.array(values))
+                #print states, values
+                #neigh.fit(np.array(states), np.array(values))
+                s = self._list_to_sklearn(states)
+                v = self._list_to_sklearn(values)
+                #print s, v
+                neigh.fit(s, v)
+            """
         else:
             raise NotImplementedError, 'Sorry, TableQ only supports three modes.'
 
@@ -279,20 +290,38 @@ class TableQ2(ValueFunction):
                     i = states.index(state)
                     return values[i]
                 else:
-                    return neigh.predict(state)[0]
+                    if len(states) >= 4:
+                        return neigh.predict(state)[0]
+                    else:
+                        if len(values) == 0:
+                            return 0
+                        else:
+                            return 0#reduce(lambda a,b: a+b, values) / len(values)
             else:
                 Q = []
-                for states, values, neigh, recency in self.action_tables:
-                    #if state in states:
-                    t = [np.array_equal(state,x) for x in states]
-                    if reduce(lambda x,y: x or y, t):
+                for at in self.action_tables:
+                    states, values, neigh, recency = at
+                    if len(states) == 0:
+                        test = False
+                    else:
+                        t = [np.array_equal(state,x) for x in states]
+                        test = reduce(lambda x,y: x or y, t)
+                    if test:
                         #i = states.index(state)
                         i = t.index(True)
                         Q.append(values[i])
                     else:
-                        if type(state) != float and state.ndim == 1:
+                        if type(state) != float and type(state) != int and state.ndim == 1:
                             state = state[np.newaxis,:]
-                        q = neigh.predict(state)[0]
+                        #q = neigh.predict(state)[0]
+                        #if len(states) >= 4:
+                        if type(neigh._fit_X) == np.ndarray:
+                            q = neigh.predict(state)[0]
+                        else:
+                            if len(values) == 0:
+                                q = 0
+                            else:
+                                q = 0#reduce(lambda a,b: a+b, values) / len(values)
                         if type(q) == np.ndarray:
                             q = q[0]
                         Q.append(q)
@@ -332,30 +361,37 @@ class TableQ2(ValueFunction):
                     self.recency[(np.where(self.states == state)[0][0],)] = 0
         elif self.mode == 'action_tables':
             for i in xrange(self.A.n):
-                if update[i] != 0:
-                    states, values, neigh, recency = self.action_tables[i]
-                    #if state in states:
+                #if update[i] != 0:
+                states, values, neigh, recency = self.action_tables[i]
+                if len(states) == 0:
+                    test = False
+                else:
                     t = [np.array_equal(state,x) for x in states]
-                    if reduce(lambda x,y: x or y, t):
-                        map(lambda x: x+1,recency)
-                        #j = states.index(state)
-                        j = t.index(True)
+                    test = reduce(lambda x,y: x or y, t)
+                if test:
+                    self._inc_list(recency)
+                    #j = states.index(state)
+                    j = t.index(True)
+                    values[j] = update[i]
+                    recency[j] = 0
+                else:
+                    self._inc_list(recency)
+                    if len(states) > self.maxlen:
+                        
+                        old = max(recency)
+                        j = recency.index(old)
+                        states[j] = state
                         values[j] = update[i]
                         recency[j] = 0
                     else:
-                        if len(states) > self.maxlen:
-                            map(lambda x: x+1,recency)
-                            old = max(recency)
-                            j = recency.index(old)
-                            states[j] = state
-                            values[j] = update[i]
-                            recency[j] = 0
-                        else:
-                            states.append(state)
-                            values.append(update[i])
-                            recency.append(0)
-                else:
-                    pass             
+                        states.append(state)
+                        values.append(update[i])
+                        recency.append(0)
+                        #print 'Action: ', i
+                        #print states
+                        #print values
+                #else:
+                #    pass             
         else:
             raise NotImplementedError, 'TableQ supports these four modes: array, dictionary, tables, and action_tables.'
 
@@ -363,7 +399,8 @@ class TableQ2(ValueFunction):
         if self.mode == 'tables':
             self.neigh.fit(self.states, self.values)
         elif self.mode == 'action_tables':
-            for states, values, neigh, recency in self.action_tables:
+            for at in self.action_tables:
+                states, values, neigh, recency = at
                 s = self._list_to_sklearn(states)
                 v = self._list_to_sklearn(values)
                 neigh.fit(s, v)
@@ -373,6 +410,10 @@ class TableQ2(ValueFunction):
         if a.ndim == 1:
             a = a[:,np.newaxis]
         return a
+
+    def _inc_list(self, l):
+        for i in xrange(len(l)):
+            l[i] += 1
     
     def contains(self, state, *args):
         if self.mode == 'dictionary':
@@ -409,19 +450,21 @@ class TableQ2(ValueFunction):
             if len(args) > 0:
                 action = args[0]
                 states, values, neigh, recency = self.action_tables[action]
-                #if state in states:
-                t = [np.array_equal(state,x) for x in states]
-                if reduce(lambda x,y: x or y, t):
-                    return True
-                else:
+                if len(states) == 0:
                     return False
-            else:
-                for states, values, neigh, recency in self.action_tables:
-                    #if state in states:
+                else:
                     t = [np.array_equal(state,x) for x in states]
-                    if reduce(lambda x,y: x or y, t):
-                       return True
-                return False
+                    return reduce(lambda x,y: x or y, t)
+            else:
+                test = []
+                for at in self.action_tables:
+                    states, values, neigh, recency = at
+                    if len(states) == 0:
+                        test.append(False)
+                    else:
+                        t = [np.array_equal(state,x) for x in states]
+                        test.append(reduce(lambda x,y: x or y, t))
+                return reduce(lambda x,y: x or y, test)
         else:
             pass
 

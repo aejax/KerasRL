@@ -139,7 +139,9 @@ def run(env, agent, n_episode, tMax, log_freq, render, monitor, plot, s_dir, sav
         plt.close('all')
 
 def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, s_dir, save_freq):
-    env = gym.make(env_name)
+    from gym.envs.toy_text.frozen_lake import FrozenLakeEnv
+    env = FrozenLakeEnv(is_slippery=False)
+    #env = gym.make(env_name)
     S = env.observation_space
     A = env.action_space
 
@@ -184,7 +186,8 @@ def test_session(env_name, agent_name, n_episode, log_freq, interactive, l_dir, 
 
     #define run length
     n_episode = n_episode
-    tMax = env.spec.timestep_limit
+    #tMax = env.spec.timestep_limit
+    tMax = 100
     log_freq = log_freq
     save_freq = save_freq
 

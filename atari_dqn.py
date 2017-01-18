@@ -10,6 +10,7 @@ def huber_loss(y_true, y_pred):
     err = y_pred - y_true
     return K.mean(K.sqrt(1 + K.square(err)) - 1, axis=-1)
 
+
 def get_agent(env, name=None):
     S = env.observation_space
     A = env.action_space

@@ -18,8 +18,8 @@ def get_agent(env, name=None):
     gamma = 0.99
     memory_size = 5000
     mode = 'action_tables'
-    embedding_function = None
-    embedding_dim = 4
+    embedding_function = None #lambda x: x.round(3)
+    embedding_dim = 1
     image = False
     name = 'EC' if name == None else name
 

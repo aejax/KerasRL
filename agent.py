@@ -980,8 +980,6 @@ class EpisodicControl(Agent):
         self.gamma = gamma
         self.image = image
 
-        
-   
         if self.policy == None:
             if Qfunction == None:
                 Qfunction = TableQ2(self.S, self.A)
@@ -993,10 +991,13 @@ class EpisodicControl(Agent):
 
         if embedding_function == None:
             s_dim = get_space_dim(self.S)
-            if s_dim > self.embedding_dim:
+            if type(self.S) == gym.spaces.Discrete:
+                self.phi = lambda o: o
+            elif s_dim > self.embedding_dim:
                 RM = np.random.random((self.embedding_dim, s_dim))
                 #self.phi = lambda o: round(np.dot(RM, o.flatten())[0], 3)
-                self.phi = lambda o: o.round(2)
+                self.phi = lambda o: np.dot(RM, o.flatten()).round(3)
+                #self.phi = lambda o: o.round(2)
             else:
                 #self.phi = lambda o: round(o[0],3)
                 self.phi = lambda o: o.round(2)
@@ -1009,8 +1010,13 @@ class EpisodicControl(Agent):
         self.states = []
         self.actions = []
 
-        self.state  = self.phi(self._preprocess(self.S.sample()))
+        tmp_s = self.S.sample()
+        self.state  = self.phi(self._preprocess(tmp_s))
         self.action = self.A.sample()
+
+        print tmp_s
+        print self._preprocess(tmp_s)
+        print self.state
 
     def _observe(self, s_next, r, done):
         self.t += 1
@@ -1019,6 +1025,7 @@ class EpisodicControl(Agent):
         self.actions.append(self.action)
 
         self.state = self.phi(self._preprocess(s_next))
+        #print s_next, self._preprocess(s_next), self.state
 
         if done:
             self.episode_count += 1
@@ -1064,10 +1071,20 @@ class EpisodicControl(Agent):
 
     def _act(self, **kwargs):
         #self.action = self.policy(self.state)
-        Q = self.Q_ec(self.state)
-        self.action = Q.argmax()
-        if self.episode_count % 100 == 0:
-            print self.t, self.state, self.Q_ec(self.state), self.action
+        self.action = self.policy(self.state, n=self.step_count)
+        #Q = self.Q_ec(self.state)
+        #self.action = Q.argmax()
+        if self.episode_count % 10 == 0 and self.t == 1:
+            #print self.t, self.state, self.Q_ec(self.state), self.action
+            #print np.equal(self.Q_ec(self.state), self.policy.Qfunction(self.state))
+            i = 0
+            for at in self.Q_ec.action_tables:
+                state, value, neigh, recency = at
+                #print 'Action: ', i 
+                #print state
+                #print value
+                #print recency[:10]
+                i += 1
         return self.action
 
     def _preprocess(self, state):
